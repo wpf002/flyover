@@ -6,6 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod layer;
+pub mod paths;
+pub mod tile;
+
 /// Bump on any breaking change to manifest.json or the binary tile layout.
 pub const FORMAT_VERSION: u32 = 1;
 
