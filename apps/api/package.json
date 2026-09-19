@@ -14,6 +14,7 @@
   "dependencies": {
     "@fastify/cors": "11.3.0",
     "@flyover/db": "workspace:*",
+    "@flyover/storage": "workspace:*",
     "@flyover/types": "workspace:*",
     "dotenv": "18.0.1",
     "fastify": "5.12.5",

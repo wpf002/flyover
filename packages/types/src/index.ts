@@ -51,6 +51,10 @@ export interface RepoDto {
   name: string;
   source: string;
   createdAt: string;
+  /** Most recent index job, if any. */
+  latestJob: IndexJobDto | null;
+  /** Most recent finished tile set, if any. */
+  latestTileSet: TileSetDto | null;
 }
 
 export interface CreateRepoRequest {
@@ -59,12 +63,28 @@ export interface CreateRepoRequest {
   name?: string;
 }
 
+/** Where a running job is, written by the worker as it goes. */
+export type JobStage = "cloning" | "indexing" | "layout" | "uploading" | "done";
+
+/** Progress and results a worker records on its job. All fields optional until reached. */
+export interface JobStats {
+  stage?: JobStage;
+  files?: number;
+  lines?: number;
+  tiles?: number;
+  maxZoom?: number;
+  cloneMb?: number;
+  /** Milliseconds spent per stage. */
+  timingsMs?: Partial<Record<JobStage, number>>;
+}
+
 export interface IndexJobDto {
   id: string;
   repoId: string;
   status: JobStatus;
   commitSha: string | null;
   error: string | null;
+  stats: JobStats | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -75,6 +95,9 @@ export interface TileSetDto {
   repoId: string;
   commitSha: string;
   formatVersion: number;
+  fileCount: number;
+  lineCount: number;
+  maxZoom: number;
   createdAt: string;
 }
 

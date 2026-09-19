@@ -1,25 +1,49 @@
-import type { ApiError } from "@flyover/types";
+import { getPrisma } from "@flyover/db";
+import type { ApiError, IndexJobDto } from "@flyover/types";
 import type { FastifyInstance } from "fastify";
 
-const notImplemented = (what: string): ApiError => ({ error: "not_implemented", message: what });
+import { toJobDto } from "../dto.js";
+
+const notFound = (what: string): ApiError => ({ error: "not_found", message: `${what} not found` });
 
 export async function jobRoutes(app: FastifyInstance): Promise<void> {
-  // TODO(M5): insert an IndexJob row with status QUEUED for this repo and return IndexJobDto.
-  // Needs: the worker claim loop in apps/worker, or queued jobs sit forever.
-  app.post("/repos/:id/jobs", async (_req, reply) => {
-    reply.code(501);
-    return notImplemented("queueing index jobs lands in M5 (docs/SPEC.md)");
+  // Queue an index job. If one is already queued or running for this repo, return it instead of
+  // stacking duplicates. The worker (apps/worker) claims QUEUED rows with SKIP LOCKED.
+  app.post<{ Params: { id: string } }>("/repos/:id/jobs", async (req, reply) => {
+    const prisma = getPrisma();
+    const repo = await prisma.repo.findUnique({ where: { id: req.params.id } });
+    if (!repo) {
+      reply.code(404);
+      return notFound("repo");
+    }
+    const active = await prisma.indexJob.findFirst({
+      where: { repoId: repo.id, status: { in: ["QUEUED", "RUNNING"] } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (active) {
+      reply.code(200);
+      return toJobDto(active);
+    }
+    const job = await prisma.indexJob.create({ data: { repoId: repo.id } });
+    reply.code(201);
+    return toJobDto(job);
   });
 
-  // TODO(M5): list IndexJob rows for a repo, newest first.
-  app.get("/repos/:id/jobs", async (_req, reply) => {
-    reply.code(501);
-    return notImplemented("listing index jobs lands in M5 (docs/SPEC.md)");
+  app.get<{ Params: { id: string } }>("/repos/:id/jobs", async (req): Promise<IndexJobDto[]> => {
+    const jobs = await getPrisma().indexJob.findMany({
+      where: { repoId: req.params.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return jobs.map(toJobDto);
   });
 
-  // TODO(M5): return one IndexJobDto so the web app can poll progress.
-  app.get("/jobs/:id", async (_req, reply) => {
-    reply.code(501);
-    return notImplemented("job status lands in M5 (docs/SPEC.md)");
+  app.get<{ Params: { id: string } }>("/jobs/:id", async (req, reply) => {
+    const job = await getPrisma().indexJob.findUnique({ where: { id: req.params.id } });
+    if (!job) {
+      reply.code(404);
+      return notFound("job");
+    }
+    return toJobDto(job);
   });
 }
