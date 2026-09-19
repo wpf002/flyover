@@ -149,13 +149,16 @@ Targets, not measurements. Replace each with a measured number, the hardware, an
 
 Hardware: Apple M5 (10 cores), 24 GB, macOS (Darwin 27.0.0). Release build (`pnpm rust:build`).
 
-| Stage (milestone)   | Input                                                 | Wall-clock | Peak RSS | Command                                               |
-| ------------------- | ----------------------------------------------------- | ---------- | -------- | ----------------------------------------------------- |
-| Index tier 1 (M1)   | postgres, 4,378,916 lines / 7,694 files               | 1.04 s     | 82.8 MiB | `/usr/bin/time -l flyover index <postgres> -o <out>`  |
-| Index tier 1 (M1)   | this repo, 4,275 lines / 85 files                     | 0.48 s     | 37.1 MiB | `/usr/bin/time -l flyover index . -o <out>`           |
-| Layout + tiles (M2) | postgres index (7,694 files → 7,840 tiles, maxZoom 7) | 8.06 s     | 98.3 MiB | `/usr/bin/time -l flyover layout <index.db> -o <out>` |
+| Stage (milestone)    | Input                                                           | Wall-clock                                                | Peak RSS                            | Command                                                                                 |
+| -------------------- | --------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
+| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                         | 1.04 s                                                    | 82.8 MiB                            | `/usr/bin/time -l flyover index <postgres> -o <out>`                                    |
+| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                               | 0.48 s                                                    | 37.1 MiB                            | `/usr/bin/time -l flyover index . -o <out>`                                             |
+| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)           | 8.06 s                                                    | 98.3 MiB                            | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                   |
+| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06 | 29.5 MiB process; 7.7 MiB GPU tiles | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440` |
 
-Index and layout are both deterministic: two runs on postgres produce byte-identical output (`index.db` sha256 matches; the 23,523-file tile set hashes identically). Target for "1M lines, laptop" is index under 60 s and full pipeline under 2 min; the 4.4M-line repo indexes in ~1 s and lays out in ~8 s. Largest geometry tile is 33 KB, under the 256 KB budget. Renderer rows stay targets until M3.
+Index and layout are both deterministic: two runs on postgres produce byte-identical output (`index.db` sha256 matches; the 23,523-file tile set hashes identically). Target for "1M lines, laptop" is index under 60 s and full pipeline under 2 min; the 4.4M-line repo indexes in ~1 s and lays out in ~8 s. Largest geometry tile is 33 KB, under the 256 KB budget.
+
+Renderer (M3): frame time is measured end to end per frame (LOD select, streaming, upload, encode, submit, GPU wait) into an offscreen 1440p target, so it excludes swapchain present and vsync. The 120 fps target (8.33 ms) is met with wide margin on postgres; it is not yet measured on Chromium (M9), and the web target stays a target until M5.
 
 ## 6. Security
 

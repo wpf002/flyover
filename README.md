@@ -6,7 +6,7 @@ Point Flyover at any git repo and it builds a 3D map of the code you can fly thr
 
 ## Status
 
-M2 done. `flyover index` writes `index.db` (files, symbols, imports, exclusions) for ten languages, and `flyover layout` turns it into a rectangular treemap tile set: `.fly` geometry, `language`/`lines` layers, `index/paths.bin`, and `manifest.json`, cut into a quadtree pyramid. Output is deterministic (byte-identical across runs). `flyover scan` and `GET/POST /repos` work. The renderer (M3) is next. Milestones are in [docs/SPEC.md](docs/SPEC.md).
+M3 done. The pipeline runs end to end from the CLI: `flyover index` builds `index.db` (files, symbols, imports, exclusions; ten languages), `flyover layout` cuts it into a deterministic quadtree tile set, and `flyover view` opens it in a native wgpu window (map and fly cameras, LOD streaming off the render thread, LRU GPU cache, hover picking, color and height bound to layers). `flyover view --screenshot` and `--bench` render headlessly. The web app registers repos; the in-browser viewer and the job worker land in M5, source text in M4. Milestones are in [docs/SPEC.md](docs/SPEC.md).
 
 ## Stack
 
@@ -55,6 +55,17 @@ cargo test --workspace
 cargo run -p flyover-cli -- scan .
 ```
 
+Map a repo and fly it (release build; any local checkout works):
+
+```bash
+pnpm rust:build
+target/release/flyover index path/to/repo -o .data/work/repo
+target/release/flyover layout .data/work/repo/index.db -o .data/tiles/repo
+target/release/flyover view .data/tiles/repo
+```
+
+In the viewer: drag to orbit, scroll to zoom, WASD to pan. Tab switches to fly mode (WASD to move, Q/E down/up, drag to look, scroll for speed). Hovering a block puts its path and line count in the title bar. Headless: `--screenshot shot.png [--path-t 0..1]` renders one frame, `--bench --frames 600` prints frame-time percentiles over a scripted camera path.
+
 Checks, all of which must pass before a commit:
 
 ```bash
@@ -91,17 +102,17 @@ Today the code reads `DATABASE_URL`, `PORT`, `API_PORT`, `API_HOST`, `WEB_ORIGIN
 ## Project structure
 
 ```
-apps/web                 Next.js shell: repo list, submit form (M5), viewer page hosting the wasm renderer (M5)
+apps/web                 Next.js: landing, repo list, add-repo form (POST /repos); wasm viewer page in M5
 apps/api                 Fastify: repos, index jobs, tile set and tile serving
 apps/worker              Claims index jobs from Postgres, clones, shells out to the flyover CLI, uploads tiles (M5)
 packages/db              Prisma schema, migrations, and the client (getPrisma)
 packages/types           Shared TS types: DTOs and the tile set manifest
 packages/config          Shared tsconfig bases and the ESLint flat config
-crates/flyover-tiles     Tile set format: manifest, tile keys, binary tile encoding (M2)
-crates/flyover-index     Repo walk, language detection, line counts today; symbols and imports in M1
-crates/flyover-layout    Treemap, then Voronoi-in-a-shape, and the quadtree tiler (M2, M6)
-crates/flyover-render    wgpu renderer, native and wasm (M3 to M5)
-crates/flyover-cli       The `flyover` binary: scan works; index, layout, view exit 2 until built
+crates/flyover-tiles     Tile set format: manifest, .fly geometry, .flv layers, paths.bin
+crates/flyover-index     Repo walk, exclusions, tree-sitter symbols and imports -> index.db
+crates/flyover-layout    Squarified treemap and quadtree tiler; Voronoi-in-a-shape in M6
+crates/flyover-render    wgpu renderer: native window + headless screenshot/bench; wasm in M5
+crates/flyover-cli       The `flyover` binary: scan, index, layout, view
 docs/SPEC.md             Architecture, tile format, security rules, milestones with acceptance criteria
 docs/BUILD_PROMPT.md     The prompt to paste into Claude Code, one milestone per session
 CLAUDE.md                Rules for Claude Code sessions in this repo
