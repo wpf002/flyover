@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub mod keys;
 pub mod layer;
 pub mod paths;
+pub mod text;
 pub mod tile;
 
 /// Bump on any breaking change to manifest.json or the binary tile layout.
