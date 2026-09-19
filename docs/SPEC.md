@@ -145,6 +145,17 @@ Targets, not measurements. Replace each with a measured number, the hardware, an
 | Renderer, web                           | 60 fps, under 1.5 GB                           |
 | Any tile                                | under 256 KB compressed, decode under 4 ms     |
 
+### Measured
+
+Hardware: Apple M5 (10 cores), 24 GB, macOS (Darwin 27.0.0). Release build (`pnpm rust:build`).
+
+| Stage (milestone) | Input                                   | Wall-clock | Peak RSS | Command                                              |
+| ----------------- | --------------------------------------- | ---------- | -------- | ---------------------------------------------------- |
+| Index tier 1 (M1) | postgres, 4,378,916 lines / 7,694 files | 1.04 s     | 82.8 MiB | `/usr/bin/time -l flyover index <postgres> -o <out>` |
+| Index tier 1 (M1) | this repo, 4,275 lines / 85 files       | 0.48 s     | 37.1 MiB | `/usr/bin/time -l flyover index . -o <out>`          |
+
+Two independent index runs on postgres are byte-identical (`index.db` sha256 matches). Target for "1M lines, laptop" is index under 60 s; the 4.4M-line run finishes in ~1 s. Full-pipeline and renderer rows stay targets until M2–M3 land.
+
 ## 6. Security
 
 The pipeline reads untrusted repos and untrusted uploads. These rules are requirements, and each needs a test.

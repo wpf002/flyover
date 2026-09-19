@@ -6,7 +6,7 @@ Point Flyover at any git repo and it builds a 3D map of the code you can fly thr
 
 ## Status
 
-Scaffold only. `flyover scan` and `GET/POST /repos` work. The indexer, layout, tiles, and renderer are not built. Milestones are in [docs/SPEC.md](docs/SPEC.md).
+M1 done. `flyover index <path> -o <dir>` writes `index.db` (files, symbols, imports, exclusions) for ten languages via tree-sitter, deterministically. `flyover scan` and `GET/POST /repos` work. Layout, tiles, and renderer are not built. Milestones are in [docs/SPEC.md](docs/SPEC.md).
 
 ## Stack
 
