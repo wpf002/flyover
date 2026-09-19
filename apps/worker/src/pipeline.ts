@@ -197,12 +197,21 @@ export async function uploadDir(
   return files.length;
 }
 
-async function listFiles(dir: string): Promise<string[]> {
+/**
+ * Every file under `dir`, sorted. The walk is iterative and appends one path at a time: a tile
+ * set for a repo the size of Chromium holds hundreds of thousands of files, and `push(...array)`
+ * on a list that long overflows the call stack.
+ */
+export async function listFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...(await listFiles(path)));
-    else if (entry.isFile()) out.push(path);
+  const pending = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile()) out.push(path);
+    }
   }
   return out.sort();
 }
