@@ -12,3 +12,8 @@ workspace = true
 
 [dependencies]
 flyover-tiles.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true

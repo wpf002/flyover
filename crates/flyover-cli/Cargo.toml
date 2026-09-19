@@ -18,4 +18,5 @@ workspace = true
 anyhow.workspace = true
 clap.workspace = true
 flyover-index.workspace = true
+flyover-layout.workspace = true
 serde_json.workspace = true
