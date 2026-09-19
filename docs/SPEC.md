@@ -107,7 +107,7 @@ wgpu. One codebase, two targets: native through winit, browser through wasm32 an
 - Threads: fetch, zstd decode, and buffer prep happen off the render thread (native threads, web workers). The render thread only uploads and draws.
 - Drawing: one pipeline for extruded cells, storage buffers for per-feature layer values, so rebinding a layer is a buffer swap.
 - Picking: feature ids into an offscreen target, read back one pixel under the cursor. Hover shows path and stats from `index/paths.bin`.
-- Text (M4): MSDF atlas of one monospace font. Files whose projected line height is 6 px or more draw real glyphs as instanced quads, colored by token class. Between 1 and 6 px they draw one colored strip per line from the token spans. Below 1 px the roof is flat color.
+- Text (M4): a single-channel SDF atlas of one monospace font (JetBrains Mono), baked offline by `crates/flyover-atlas` and committed, so neither shipped binary carries a font parser. Files whose projected line height is 6 px or more draw real glyphs as instanced quads, colored by token class. Between 1 and 6 px they draw one colored bar per token run from the token spans. Below 1 px the roof is flat color. A file's lines are fitted to its roof rectangle at whatever em size makes the longest line and the line count both fit, and the block is centred on the roof. Both tiers come out of one layout pass into one instance buffer, so a tier change is a draw range, not a rebuild; layout runs on a worker, never the render thread.
 - Edges (M7): arcs between cells, bundled per zoom level so low zoom shows directory-to-directory flows.
 
 ## 3. Layers
@@ -151,14 +151,18 @@ Targets, not measurements. Replace each with a measured number, the hardware, an
 
 Hardware: Apple M5 (10 cores), 24 GB, macOS (Darwin 27.0.0). Release build (`pnpm rust:build`).
 
-| Stage (milestone)    | Input                                                                  | Wall-clock                                                                          | Peak RSS                                      | Command                                                                                 |
-| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                                | 1.04 s                                                                              | 82.8 MiB                                      | `/usr/bin/time -l flyover index <postgres> -o <out>`                                    |
-| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                                      | 0.48 s                                                                              | 37.1 MiB                                      | `/usr/bin/time -l flyover index . -o <out>`                                             |
-| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)                  | 8.06 s                                                                              | 98.3 MiB                                      | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                   |
-| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen        | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06                           | 29.5 MiB process; 7.7 MiB GPU tiles           | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440` |
-| Web pipeline (M5)    | postgres via the browser: submit -> clone -> index -> layout -> upload | 75 s total (clone 58.5, index 1.4, layout 9.1, upload 2.7)                          | —                                             | submit https://github.com/postgres/postgres.git in the web app                          |
-| Web renderer (M5)    | postgres tile set in Chrome 152, 2048x1105 canvas, orbiting at zoom    | 120 fps sustained (display cap); frame intervals p50 8.3 ms, p95 9.1 ms, p99 9.3 ms | 14 MB JS heap; 20-24 tiles drawn of 55 cached | `requestAnimationFrame` deltas over 480 frames in the viewer                            |
+| Stage (milestone)    | Input                                                                  | Wall-clock                                                                          | Peak RSS                                      | Command                                                                                  |
+| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                                | 1.04 s                                                                              | 82.8 MiB                                      | `/usr/bin/time -l flyover index <postgres> -o <out>`                                     |
+| Index + text (M4)    | postgres, 4,379,393 lines / 7,694 files (2,571 parsed and stored)      | 1.69 s                                                                              | 195.6 MiB                                     | `/usr/bin/time -l flyover index <postgres> -o <out>`                                     |
+| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                                      | 0.48 s                                                                              | 37.1 MiB                                      | `/usr/bin/time -l flyover index . -o <out>`                                              |
+| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)                  | 8.06 s                                                                              | 98.3 MiB                                      | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                    |
+| Layout + text (M4)   | postgres index → 7,839 tiles + 2,571 `.ftx` (115 MiB total, 23 text)   | 13.19 s                                                                             | 126.3 MiB                                     | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                    |
+| Index (M9, partial)  | Chromium, 39,732,844 lines / 251,326 files                             | 76.7 s (clone 42.2 min at 5,858 MB, layout 3.7 min → 190,563 tiles, maxZoom 9)      | not captured (ran inside the worker)          | submit https://github.com/chromium/chromium.git in the web app                           |
+| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen        | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06                           | 29.5 MiB process; 7.7 MiB GPU tiles           | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440`  |
+| Text, native (M4)    | postgres, 600-frame dive onto `numeric.c` (12k lines), 2560x1440       | with text avg 0.53 ms, p50 0.41, p95 1.01, p99 1.35; without avg 0.40, p95 0.74     | 8.0 MiB GPU tiles; 5.4 MiB text instances     | `flyover view <tiles> --bench --frames 600 --width 2560 --height 1440 --focus numeric.c` |
+| Web pipeline (M5)    | postgres via the browser: submit -> clone -> index -> layout -> upload | 75 s total (clone 58.5, index 1.4, layout 9.1, upload 2.7)                          | —                                             | submit https://github.com/postgres/postgres.git in the web app                           |
+| Web renderer (M5)    | postgres tile set in Chrome 152, 2048x1105 canvas, orbiting at zoom    | 120 fps sustained (display cap); frame intervals p50 8.3 ms, p95 9.1 ms, p99 9.3 ms | 14 MB JS heap; 20-24 tiles drawn of 55 cached | `requestAnimationFrame` deltas over 480 frames in the viewer                             |
 
 Index and layout are both deterministic: two runs on postgres produce byte-identical output (`index.db` sha256 matches; the 23,523-file tile set hashes identically). Target for "1M lines, laptop" is index under 60 s and full pipeline under 2 min; the 4.4M-line repo indexes in ~1 s and lays out in ~8 s. Largest geometry tile is 33 KB, under the 256 KB budget.
 
@@ -167,6 +171,18 @@ ceiling; the number that matters is that no frame interval exceeded 9.4 ms while
 the 60 fps target holds with room. Memory is the JS heap; GPU tile residency is reported by the viewer.
 
 Renderer (M3): frame time is measured end to end per frame (LOD select, streaming, upload, encode, submit, GPU wait) into an offscreen 1440p target, so it excludes swapchain present and vsync. The 120 fps target (8.33 ms) is met with wide margin on postgres; it is not yet measured on Chromium (M9).
+
+Text (M4): the dive path ends with the camera close enough over one file that its lines are 14 px
+tall, which is the glyph tier. Text costs 0.13 ms a frame on average and 0.27 ms at p95, against an
+allowance of 2 ms. Storing source in `index.db` roughly doubles peak index RSS (83 -> 196 MiB) and
+adds 23 MiB of `.ftx` to a 115 MiB postgres tile set. A file's em size comes from its whole line
+count, but only a 1,024-line window around where the camera looks is turned into quads, so a
+12,000-line file costs the same as a 500-line one.
+
+Chromium (partial): index and layout both completed and are recorded above. The upload stage then
+failed on `push(...array)` over ~800k tile paths, which is fixed and covered by a regression test in
+`apps/worker/test/upload-scale.test.ts`; the rerun is not finished, so there is still no Chromium
+render measurement.
 
 ## 6. Security
 
@@ -202,7 +218,7 @@ Accept: encode/decode round-trip tests. Every file in the index appears in exact
 **M3 Native renderer.** `flyover view <tileset-dir>` opens a window: fly and map cameras, LOD selection, LRU cache, async loading, picking with hover info, color by layer, height by layer.
 Accept: opens the M2 tile set of the 1M-line repo. Frame time logged with `--bench` over a scripted camera path. No tile decode on the render thread (assert in debug builds).
 
-**M4 Text.** Token spans at index time, `.ftx` tiles, MSDF atlas, glyph and strip rendering with the 6 px and 1 px thresholds.
+**M4 Text.** Token spans at index time, `.ftx` tiles, SDF atlas, glyph and bar rendering with the 6 px and 1 px thresholds.
 Accept: a file's text is legible at close range and matches the source byte for byte. Frame time on the scripted path stays inside the M3 budget plus 2 ms.
 
 **M5 Web, end to end.** wasm build of the renderer, viewer page, storage drivers (`fs`, `s3`), job routes, the worker loop with every rule in section 6, submit form and progress UI, worker Dockerfile, Railway deploy of all services.

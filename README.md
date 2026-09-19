@@ -6,7 +6,15 @@ Point Flyover at any git repo and it builds a 3D map of the code you can fly thr
 
 ## Status
 
-M5 done except deployment. The whole pipeline runs from the browser: submit a public git URL, the worker clones it (shallow, hooks off, host-allowlisted, SSRF-checked), indexes it, cuts a tile set, and uploads it; the page shows the job's stage live; when it finishes you fly the result in the browser on WebGPU. The same renderer runs natively with `flyover view` (window, headless screenshot, `--bench`). Not done: the worker Dockerfile and the Railway deploy, so there is no public URL yet. Source text (M4), shapes (M6), and edges (M7) are still ahead. Milestones are in [docs/SPEC.md](docs/SPEC.md).
+M4 done, on top of M5-except-deployment. Get close to a building and you read the file: real
+glyphs from a baked SDF atlas, coloured by token class from spans the indexer wrote, one coloured
+bar per token run in the middle distance, flat roof far away. The whole pipeline still runs from
+the browser: submit a public git URL, the worker clones it (shallow, hooks off, host-allowlisted,
+SSRF-checked), indexes it, cuts a tile set, and uploads it; the page shows the job's stage live;
+when it finishes you fly the result on WebGPU. The same renderer runs natively with `flyover view`
+(window, headless screenshot, `--bench`, `--focus <path>`). Not done: the worker Dockerfile and the
+Railway deploy, so there is no public URL yet. Shapes (M6) and edges (M7) are still ahead.
+Milestones are in [docs/SPEC.md](docs/SPEC.md).
 
 ## Stack
 
@@ -70,7 +78,13 @@ target/release/flyover layout .data/work/repo/index.db -o .data/tiles/repo
 target/release/flyover view .data/tiles/repo
 ```
 
-In the viewer: drag to orbit, scroll to zoom, WASD to pan. Tab switches to fly mode (WASD to move, Q/E down/up, drag to look, scroll for speed). Hovering a block puts its path and line count in the title bar. Headless: `--screenshot shot.png [--path-t 0..1]` renders one frame, `--bench --frames 600` prints frame-time percentiles over a scripted camera path.
+In the viewer: drag to orbit, scroll to zoom, WASD to pan. Tab switches to fly mode (WASD to move, Q/E down/up, drag to look, scroll for speed). Hovering a block puts its path and line count in the title bar. Headless: `--screenshot shot.png [--path-t 0..1]` renders one frame, `--bench --frames 600` prints frame-time percentiles over a scripted camera path. `--focus <path substring>` starts the camera over that file, close enough to read it, and turns `--bench` into a dive onto it; `--no-text` draws buildings without source.
+
+The font atlas the renderer draws glyphs from is committed at `crates/flyover-render/assets/font-atlas.bin`. Rebake it only if the font or the cell layout changes:
+
+```bash
+cargo run -p flyover-atlas
+```
 
 Checks, all of which must pass before a commit:
 
@@ -115,16 +129,20 @@ packages/db              Prisma schema, migrations, and the client (getPrisma)
 packages/types           Shared TS types: DTOs and the tile set manifest
 packages/storage         Tile storage behind one interface: fs (dev) and S3-compatible (prod), path guard
 packages/config          Shared tsconfig bases and the ESLint flat config
-crates/flyover-tiles     Tile set format: manifest, .fly geometry, .flv layers, paths.bin
+crates/flyover-tiles     Tile set format: manifest, .fly geometry, .flv layers, .ftx text, paths.bin
 crates/flyover-index     Repo walk, exclusions, tree-sitter symbols and imports -> index.db
 crates/flyover-layout    Squarified treemap and quadtree tiler; Voronoi-in-a-shape in M6
-crates/flyover-render    wgpu renderer: native window + headless screenshot/bench; wasm in M5
+crates/flyover-render    wgpu renderer: native window + headless screenshot/bench, source text on roofs
+crates/flyover-atlas     Dev-only: bakes the committed SDF font atlas the renderer draws glyphs from
 crates/flyover-cli       The `flyover` binary: scan, index, layout, view
 crates/flyover-web       wasm32 + WebGPU build of the renderer, driven from the web app
 docs/SPEC.md             Architecture, tile format, security rules, milestones with acceptance criteria
 docs/BUILD_PROMPT.md     The prompt to paste into Claude Code, one milestone per session
 CLAUDE.md                Rules for Claude Code sessions in this repo
 ```
+
+The renderer bundles JetBrains Mono (SIL Open Font License 1.1); the font and its licence are in
+`crates/flyover-render/assets`.
 
 ## Deploy
 
