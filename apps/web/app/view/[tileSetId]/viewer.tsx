@@ -7,8 +7,26 @@ import { useEffect, useRef, useState } from "react";
 interface WebViewer {
   frame(dt: number): void;
   take_requests(): Uint32Array;
-  deliver(z: number, x: number, y: number, vertices: Uint8Array, features: Uint8Array): void;
+  deliver(
+    z: number,
+    x: number,
+    y: number,
+    vertices: Uint8Array,
+    features: Uint8Array,
+    roofs: Uint8Array,
+  ): void;
   fail(z: number, x: number, y: number): void;
+  take_text_requests(): Float64Array;
+  deliver_text(
+    fileId: number,
+    instances: Uint8Array,
+    glyphCount: number,
+    stripCount: number,
+    firstLine: number,
+    lineWorld: number,
+  ): void;
+  fail_text(fileId: number): void;
+  text_stats(): Float64Array;
   resize(width: number, height: number): void;
   pointer_down(x: number, y: number): void;
   pointer_up(): void;
@@ -68,7 +86,7 @@ export function Viewer({ tileSetId, apiBase }: { tileSetId: string; apiBase: str
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [hover, setHover] = useState<string | null>(null);
   const [mode, setMode] = useState("map");
-  const [stats, setStats] = useState({ drawn: 0, resident: 0 });
+  const [stats, setStats] = useState({ drawn: 0, resident: 0, reading: 0 });
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -138,12 +156,19 @@ export function Viewer({ tileSetId, apiBase }: { tileSetId: string; apiBase: str
       const config = JSON.parse(v.worker_config());
       const poolSize = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
       const queue: Array<[number, number, number]> = [];
+      // Text is queued behind geometry: a roof with no building under it is nothing to read.
+      const textQueue: Array<{ id: number; rect: number[]; z: number; firstLine: number }> = [];
       let inflight = 0;
       let turn = 0;
       const pump = () => {
         while (inflight < poolSize * 4 && queue.length > 0) {
           const [z, x, y] = queue.shift()!;
           workers[turn++ % poolSize]!.postMessage({ type: "tile", z, x, y, base });
+          inflight++;
+        }
+        while (inflight < poolSize * 4 && textQueue.length > 0) {
+          const job = textQueue.shift()!;
+          workers[turn++ % poolSize]!.postMessage({ type: "text", ...job, base });
           inflight++;
         }
       };
@@ -153,7 +178,10 @@ export function Viewer({ tileSetId, apiBase }: { tileSetId: string; apiBase: str
         worker.onmessage = (event: MessageEvent) => {
           inflight--;
           const m = event.data;
-          if (m.type === "tile") v.deliver(m.z, m.x, m.y, m.vertices, m.features);
+          if (m.type === "tile") v.deliver(m.z, m.x, m.y, m.vertices, m.features, m.roofs);
+          else if (m.type === "text")
+            v.deliver_text(m.id, m.instances, m.meta[0], m.meta[1], m.meta[2], m.meta[3]);
+          else if (m.type === "textError") v.fail_text(m.id);
           else v.fail(m.z, m.x, m.y);
           pump();
         };
@@ -236,7 +264,12 @@ export function Viewer({ tileSetId, apiBase }: { tileSetId: string; apiBase: str
       undo.push(() => resizer.disconnect());
 
       const statTimer = window.setInterval(
-        () => setStats({ drawn: v.drawn_tiles(), resident: v.resident_tiles() }),
+        () =>
+          setStats({
+            drawn: v.drawn_tiles(),
+            resident: v.resident_tiles(),
+            reading: v.text_stats()[1] ?? 0,
+          }),
         500,
       );
       undo.push(() => window.clearInterval(statTimer));
@@ -248,6 +281,15 @@ export function Viewer({ tileSetId, apiBase }: { tileSetId: string; apiBase: str
         last = now;
         const req = v.take_requests();
         for (let i = 0; i + 2 < req.length; i += 3) queue.push([req[i]!, req[i + 1]!, req[i + 2]!]);
+        const text = v.take_text_requests();
+        for (let i = 0; i + 6 < text.length; i += 7) {
+          textQueue.push({
+            id: text[i]!,
+            rect: [text[i + 1]!, text[i + 2]!, text[i + 3]!, text[i + 4]!],
+            z: text[i + 5]!,
+            firstLine: text[i + 6]!,
+          });
+        }
         pump();
         raf = requestAnimationFrame(loop);
       };
@@ -275,6 +317,7 @@ export function Viewer({ tileSetId, apiBase }: { tileSetId: string; apiBase: str
             <span className="hud-chip">{mode === "fly" ? "Fly mode" : "Map mode"}</span>
             <span className="hud-chip muted">
               {stats.drawn} tiles drawn · {stats.resident} cached
+              {stats.reading > 0 ? ` · ${stats.reading} readable` : ""}
             </span>
             {hover ? <span className="hud-chip strong">{hover}</span> : null}
           </div>
