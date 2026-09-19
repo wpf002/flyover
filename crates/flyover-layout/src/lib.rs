@@ -22,11 +22,13 @@ use std::path::Path;
 
 use flyover_tiles::layer::{LayerTile, LayerValues};
 use flyover_tiles::paths::{PathEntry, PathsIndex};
+use flyover_tiles::text::{decode_spans, TextTile};
 use flyover_tiles::tile::{Feature, FeatureKind, Tile};
 use flyover_tiles::{
     layer_tile_key, tile_key, Bounds, Category, LayerDescriptor, LayerKind, Manifest, Range,
     RepoInfo, Shape, ShapeSource, Stats, FORMAT_VERSION,
 };
+use rusqlite::OptionalExtension;
 use treemap::{squarify, Rect};
 
 /// Target features per tile. Drives the zoom at which a cell emerges, which keeps per-tile counts
@@ -61,6 +63,7 @@ pub struct Summary {
     pub files: u64,
     pub directories: u64,
     pub tiles: u64,
+    pub text_tiles: u64,
     pub max_zoom: u8,
 }
 
@@ -75,6 +78,8 @@ pub enum LayoutError {
     },
     #[error("encoding a tile: {0}")]
     Tile(#[from] flyover_tiles::tile::TileError),
+    #[error("encoding a text tile: {0}")]
+    Text(#[from] flyover_tiles::text::TextError),
     #[error("writing the manifest: {0}")]
     Manifest(#[from] flyover_tiles::ManifestError),
 }
@@ -136,13 +141,24 @@ pub fn run(index_db: &Path, out_dir: &Path, opts: &Options) -> Result<Summary, L
     )?;
     let tile_count = keys.len() as u64;
     write_paths(&files, out_dir)?;
+    let text_tiles = write_text(index_db, out_dir)?;
     let stats = stats(&arena, &files);
-    write_manifest(out_dir, opts, &world, max_zoom, &categories, &files, stats)?;
+    write_manifest(
+        out_dir,
+        opts,
+        &world,
+        max_zoom,
+        &categories,
+        &files,
+        stats,
+        text_tiles > 0,
+    )?;
 
     Ok(Summary {
         files: stats.files,
         directories: stats.directories,
         tiles: tile_count,
+        text_tiles,
         max_zoom,
     })
 }
@@ -520,6 +536,51 @@ fn stats(arena: &[Node], files: &[FileRow]) -> Stats {
     }
 }
 
+/// Write one `.ftx` per parsed file, streaming rows so a large repo's text never sits in memory
+/// all at once. The index stores the source zstd-compressed; the tile recompresses it with its
+/// token spans.
+fn write_text(index_db: &Path, out_dir: &Path) -> Result<u64, LayoutError> {
+    let conn = rusqlite::Connection::open(index_db)?;
+    // An index without a `text` table is valid: the tile set simply has no text (hasText: false).
+    let has_table = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'text'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !has_table {
+        return Ok(0);
+    }
+    let mut stmt = conn.prepare("SELECT file_id, content, tokens FROM text ORDER BY file_id")?;
+    let mut rows = stmt.query([])?;
+    let mut count = 0u64;
+    while let Some(row) = rows.next()? {
+        let file_id: i64 = row.get(0)?;
+        let content: Vec<u8> = row.get(1)?;
+        let packed: Vec<u8> = row.get(2)?;
+        let Ok(text) = zstd::stream::decode_all(&content[..]) else {
+            continue;
+        };
+        let Ok(text) = String::from_utf8(text) else {
+            continue;
+        };
+        let tile = TextTile {
+            file_id: file_id as u32,
+            text,
+            spans: decode_spans(&packed),
+        };
+        write_bytes(
+            out_dir,
+            &flyover_tiles::text::text_key(file_id as u32),
+            &tile.encode()?,
+        )?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 fn write_paths(files: &[FileRow], out_dir: &Path) -> Result<(), LayoutError> {
     let index = PathsIndex {
         entries: files
@@ -544,6 +605,7 @@ fn write_manifest(
     categories: &[String],
     files: &[FileRow],
     stats: Stats,
+    has_text: bool,
 ) -> Result<(), LayoutError> {
     let (min_lines, max_lines) = files
         .iter()
@@ -605,7 +667,7 @@ fn write_manifest(
             },
         ],
         has_edges: false,
-        has_text: false,
+        has_text,
     };
     write_bytes(out_dir, "manifest.json", manifest.to_json()?.as_bytes())
 }
