@@ -33,10 +33,11 @@ pub struct Import {
     pub module: String,
 }
 
-/// Outcome of parsing one file.
+/// Outcome of parsing one file: what the index stores and what the text tiles color by.
 pub struct Parsed {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<Import>,
+    pub tokens: Vec<crate::tokens::TokenSpan>,
 }
 
 /// A compiled grammar plus its queries.
@@ -142,8 +143,13 @@ pub fn parse(grammar: &Grammar, source: &str, budget: Option<Duration>) -> Optio
     symbols.dedup();
     imports.sort_unstable();
     imports.dedup();
+    let tokens = crate::tokens::spans(&tree, source);
 
-    Some(Parsed { symbols, imports })
+    Some(Parsed {
+        symbols,
+        imports,
+        tokens,
+    })
 }
 
 fn collect_symbols(grammar: &Grammar, root: tree_sitter::Node, bytes: &[u8]) -> Vec<Symbol> {

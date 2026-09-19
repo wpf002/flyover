@@ -23,6 +23,9 @@ use rayon::prelude::*;
 use crate::grammars::{self, Import, Registry, Symbol};
 use crate::{count_lines, exclude, is_binary, language, MAX_TEXT_BYTES, SNIFF_BYTES};
 
+/// Compression level for stored source text; it is decompressed again at layout time.
+const TEXT_ZSTD_LEVEL: i32 = 9;
+
 /// One row of the `files` table plus the symbols and imports found in it.
 pub struct FileRecord {
     pub path: String,
@@ -35,6 +38,11 @@ pub struct FileRecord {
     pub parsed: bool,
     pub symbols: Vec<Symbol>,
     pub imports: Vec<Import>,
+    /// zstd-compressed UTF-8 source, kept only for parsed files so text tiles can be written
+    /// later from index.db alone. Held compressed so large repos stay affordable in memory.
+    pub text: Option<Vec<u8>>,
+    /// Packed token spans (see [`crate::tokens`]).
+    pub tokens: Vec<u8>,
 }
 
 /// One row of the `excluded` table.
@@ -233,6 +241,8 @@ fn process(path: &Path, root: &Path, registry: &Registry, options: &Options) -> 
                 parsed: false,
                 symbols: Vec::new(),
                 imports: Vec::new(),
+                text: None,
+                tokens: Vec::new(),
             })),
             None => Outcome::Skip,
         };
@@ -260,6 +270,8 @@ fn process(path: &Path, root: &Path, registry: &Registry, options: &Options) -> 
             parsed: false,
             symbols: Vec::new(),
             imports: Vec::new(),
+            text: None,
+            tokens: Vec::new(),
         }));
     }
 
@@ -278,10 +290,17 @@ fn process(path: &Path, root: &Path, registry: &Registry, options: &Options) -> 
     // Parse only valid UTF-8 with a known grammar. Everything else keeps file-level data.
     let extension = path.extension().and_then(|e| e.to_str());
     let key = grammars::grammar_key(&language, extension);
+    let mut text_blob = None;
+    let mut token_blob = Vec::new();
     let (parsed, symbols, imports) = match (std::str::from_utf8(&bytes).ok(), registry.get(key)) {
         (Some(text), Some(grammar)) => {
             match grammars::parse(grammar, text, options.parse_timeout) {
-                Some(result) => (true, result.symbols, result.imports),
+                Some(result) => {
+                    // Keep the source and its spans for the text tiles (SPEC 2.4).
+                    text_blob = zstd::stream::encode_all(text.as_bytes(), TEXT_ZSTD_LEVEL).ok();
+                    token_blob = flyover_tiles::text::encode_spans(&result.tokens);
+                    (true, result.symbols, result.imports)
+                }
                 None => (false, Vec::new(), Vec::new()), // parse abandoned by the time budget
             }
         }
@@ -299,6 +318,8 @@ fn process(path: &Path, root: &Path, registry: &Registry, options: &Options) -> 
         parsed,
         symbols,
         imports,
+        text: text_blob,
+        tokens: token_blob,
     }))
 }
 

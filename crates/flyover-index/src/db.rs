@@ -12,7 +12,8 @@ use rusqlite::{params, Connection};
 use crate::index::{ExcludedEntry, FileRecord};
 
 /// Bumped whenever the on-disk table layout changes.
-pub const SCHEMA_VERSION: u32 = 1;
+/// v2: the `text` table, so the layout stage can write text tiles from index.db alone.
+pub const SCHEMA_VERSION: u32 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE meta (
@@ -55,6 +56,14 @@ CREATE TABLE edges (
     dst_file_id INTEGER NOT NULL REFERENCES files(id),
     kind        TEXT NOT NULL,
     confidence  TEXT NOT NULL CHECK (confidence IN ('exact', 'heuristic'))
+);
+
+-- Source text and token spans for the files that were parsed, so `flyover layout` can write
+-- text tiles without the repo. Content is zstd-compressed UTF-8; tokens are packed spans.
+CREATE TABLE text (
+    file_id INTEGER PRIMARY KEY REFERENCES files(id),
+    content BLOB NOT NULL,
+    tokens  BLOB NOT NULL
 );
 
 CREATE TABLE excluded (
@@ -113,6 +122,8 @@ pub fn write(
         )?;
         let mut ins_imp =
             tx.prepare("INSERT INTO imports (id, file_id, module, line) VALUES (?1, ?2, ?3, ?4)")?;
+        let mut ins_text =
+            tx.prepare("INSERT INTO text (file_id, content, tokens) VALUES (?1, ?2, ?3)")?;
 
         let mut symbol_id: i64 = 0;
         let mut import_id: i64 = 0;
@@ -143,6 +154,9 @@ pub fn write(
             for imp in &file.imports {
                 import_id += 1;
                 ins_imp.execute(params![import_id, file_id, imp.module, imp.line])?;
+            }
+            if let Some(text) = &file.text {
+                ins_text.execute(params![file_id, text, file.tokens])?;
             }
         }
 

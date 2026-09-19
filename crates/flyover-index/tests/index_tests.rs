@@ -129,8 +129,43 @@ fn polyglot_fixture_has_golden_counts() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(schema_version, "1");
+    assert_eq!(schema_version, "2");
 
+    std::fs::remove_dir_all(&out).ok();
+}
+
+/// SPEC M4: the stored text must match the source byte for byte, and its spans must stay inside it.
+#[test]
+fn stored_text_matches_the_source_byte_for_byte() {
+    let out = scratch("text");
+    let fixture = fixture("polyglot");
+    run(&fixture, &out, &Options::default()).unwrap();
+    let conn = Connection::open(out.join("index.db")).unwrap();
+
+    let mut stmt = conn
+        .prepare("SELECT f.path, t.content, t.tokens FROM text t JOIN files f ON f.id = t.file_id ORDER BY f.path")
+        .unwrap();
+    let rows: Vec<(String, Vec<u8>, Vec<u8>)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+
+    // Every parsed file has text; the polyglot fixture parses all 12.
+    assert_eq!(rows.len(), 12);
+    for (path, content, tokens) in rows {
+        let text = zstd::stream::decode_all(&content[..]).unwrap();
+        let on_disk = std::fs::read(fixture.join(&path)).unwrap();
+        assert_eq!(text, on_disk, "stored text differs for {path}");
+        let spans = flyover_tiles::text::decode_spans(&tokens);
+        assert!(!spans.is_empty(), "no token spans for {path}");
+        for span in spans {
+            assert!(
+                (span.start + span.len) as usize <= text.len(),
+                "span past end of {path}"
+            );
+        }
+    }
     std::fs::remove_dir_all(&out).ok();
 }
 

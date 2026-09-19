@@ -22,6 +22,7 @@ pub mod exclude;
 pub mod grammars;
 pub mod index;
 pub mod language;
+pub mod tokens;
 
 pub use index::{build, run, IndexData, IndexError, Options};
 

@@ -56,6 +56,9 @@ js-sys = "=0.3.105"
 web-sys = "=0.3.105"
 console_error_panic_hook = "=0.1.7"
 
+# Font rasterizer, used only by the offline atlas baker (crates/flyover-atlas).
+fontdue = "=0.9.4"
+
 flyover-tiles = { path = "crates/flyover-tiles" }
 flyover-index = { path = "crates/flyover-index" }
 flyover-layout = { path = "crates/flyover-layout" }
