@@ -12,3 +12,14 @@ workspace = true
 
 [dependencies]
 flyover-tiles.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+png.workspace = true
+pollster.workspace = true
+thiserror.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+
+[dev-dependencies]
+flyover-layout.workspace = true
+rusqlite.workspace = true

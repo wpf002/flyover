@@ -37,6 +37,14 @@ tree-sitter-rust = "=0.24.2"
 tree-sitter-typescript = "=0.23.2"
 zstd = "=0.14.0"
 
+# Renderer (M3): wgpu native + winit window, glam math, offscreen PNG for headless checks.
+wgpu = "=30.0.1"
+winit = "=0.30.13"
+pollster = "=1.0.1"
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+glam = { version = "=0.33.7", features = ["bytemuck"] }
+png = "=0.18.1"
+
 flyover-tiles = { path = "crates/flyover-tiles" }
 flyover-index = { path = "crates/flyover-index" }
 flyover-layout = { path = "crates/flyover-layout" }
