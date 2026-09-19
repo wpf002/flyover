@@ -1,9 +1,44 @@
+/*
+ * Flyover design system. Dark-first: the product is a 3D map, so the shell is dark by intent
+ * (color-scheme: dark). Everything reads from tokens, so a light theme is a token swap later.
+ * Spacing: 4/8/12/16/24/32/48/64/96. Type: 12/14/16/20/32. One accent (blue) for actions.
+ */
+
 :root {
-  --bg: #0b0d10;
-  --fg: #e6e8eb;
-  --muted: #8a929c;
-  --line: #1f242b;
+  /* neutral ramp, cool-tinted */
+  --bg: #0a0c10;
+  --bg-elev: #0e1116;
+  --surface: #12151c;
+  --surface-hover: #171b23;
+  --border: #222833;
+  --border-strong: #2f3743;
+  --text: #e7ebf1;
+  --text-muted: #9aa7b6;
+  --text-faint: #6a7583;
+
+  /* one accent for the primary action + active state */
   --accent: #5eb1ff;
+  --accent-hover: #7cc0ff;
+  --accent-press: #4aa0f2;
+  --accent-fg: #04121f;
+  --accent-ring: rgba(94, 177, 255, 0.5);
+
+  /* semantic status (not actions) */
+  --ok: #57d9a3;
+  --warn: #f2c661;
+  --danger: #ff8080;
+
+  /* accent-2 is decoration only (gradients, glows), never an action color */
+  --accent-2: #58e6cf;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-pill: 999px;
+
+  --shadow-float: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
   color-scheme: dark;
 }
 
@@ -11,63 +46,526 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--fg);
-  font:
-    15px/1.5 ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
-}
-
-main {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 48px 16px;
-}
-
-h1 {
-  font-size: 28px;
-  margin: 0 0 8px;
-}
-
-p.lede {
-  color: var(--muted);
-  margin: 0 0 32px;
-}
-
-ul.repos {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  border-top: 1px solid var(--line);
-}
-
-ul.repos li {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-ul.repos .source {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.notice {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 16px;
-  color: var(--muted);
+  color: var(--text);
+  font: 400 16px/1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* ambient aerial glow behind the top of the page */
+  background-image:
+    radial-gradient(1100px 520px at 50% -8%, rgba(94, 177, 255, 0.12), transparent 60%),
+    radial-gradient(760px 420px at 88% 4%, rgba(88, 230, 207, 0.07), transparent 55%);
+  background-repeat: no-repeat;
+  min-height: 100vh;
 }
 
 a {
   color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--accent-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---- layout shell ---------------------------------------------------------------------- */
+
+.shell {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 64px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.brand svg {
+  width: 26px;
+  height: 26px;
+  color: var(--accent);
+}
+.brand .brand-name {
+  font-size: 20px;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topnav a {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  transition:
+    color 160ms ease,
+    background 160ms ease;
+}
+.topnav a:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* ---- hero ------------------------------------------------------------------------------ */
+
+.hero {
+  padding: 64px 0 48px;
+  max-width: 760px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+}
+.eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(87, 217, 163, 0.18);
+}
+
+h1 {
+  margin: 24px 0 0;
+  font-size: 32px;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+h1 .grad {
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lede {
+  margin: 16px 0 0;
+  font-size: 16px;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+.hero-meta {
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+.hero-meta b {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- panels ---------------------------------------------------------------------------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 48px 0 16px;
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.section-head .count {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- submit form ----------------------------------------------------------------------- */
+
+.submit-panel {
+  box-shadow: var(--shadow-float);
+}
+.submit-panel h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.submit-panel .hint {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.submit-row {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
+}
+.submit-row input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  font: 400 15px/1.4 var(--font-mono);
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.submit-row input::placeholder {
+  color: var(--text-faint);
+}
+.submit-row input:hover {
+  border-color: #3a4552;
+}
+.submit-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 20px;
+  font: 500 15px/1 var(--font-sans);
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 120ms ease,
+    opacity 160ms ease;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 700;
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+.btn-primary:active {
+  background: var(--accent-press);
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chips {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.chips .chips-label {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+.chip {
+  font: 500 13px/1 var(--font-sans);
+  color: var(--text-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+.chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.form-msg {
+  margin: 14px 0 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.form-msg.error {
+  color: var(--danger);
+}
+.form-msg.ok {
+  color: var(--ok);
+}
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(4, 18, 31, 0.35);
+  border-top-color: var(--accent-fg);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- repo grid ------------------------------------------------------------------------- */
+
+.repo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.repo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 120ms ease;
+}
+.repo-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+.repo-card .repo-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.repo-card .repo-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-card .repo-source {
+  font: 400 13px/1.5 var(--font-mono);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.repo-card .repo-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-elev);
+  white-space: nowrap;
+}
+.pill .pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* ---- empty / error states -------------------------------------------------------------- */
+
+.state {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.state h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.state p {
+  margin: 0 auto;
+  max-width: 52ch;
+  font-size: 14px;
+}
+.state.error {
+  border-style: solid;
+  border-color: rgba(255, 128, 128, 0.35);
+}
+.state code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+/* ---- pipeline status ------------------------------------------------------------------- */
+
+.pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.stage {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.stage .stage-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.stage .tick {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.stage.done .tick {
+  color: var(--ok);
+}
+.stage.next .tick {
+  color: var(--accent);
+}
+.stage.later .tick {
+  color: var(--text-faint);
+}
+.stage .stage-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---- footer ---------------------------------------------------------------------------- */
+
+.footer {
+  margin: 64px 0 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  justify-content: space-between;
+}
+.footer code {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* ---- viewer stub ----------------------------------------------------------------------- */
+
+.viewer-wrap {
+  padding: 64px 0;
+}
+.viewer-wrap .back {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* ---- responsive ------------------------------------------------------------------------ */
+
+@media (max-width: 560px) {
+  .shell {
+    padding: 0 16px;
+  }
+  .hero {
+    padding: 40px 0 32px;
+  }
+  h1 {
+    font-size: 28px;
+  }
+  .submit-row {
+    flex-direction: column;
+  }
+  .btn-primary {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
