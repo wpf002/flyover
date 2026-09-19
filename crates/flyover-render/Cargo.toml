@@ -14,10 +14,13 @@ workspace = true
 flyover-tiles.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
-png.workspace = true
-pollster.workspace = true
 thiserror.workspace = true
 wgpu.workspace = true
+
+# Window, blocking device setup, and PNG screenshots are native front ends only.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png.workspace = true
+pollster.workspace = true
 winit.workspace = true
 
 [dev-dependencies]

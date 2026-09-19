@@ -4,8 +4,8 @@
 //! out as a squarified treemap in a square whose area equals the total weight, then cuts a
 //! quadtree tile pyramid over it. Each node emerges at the zoom where its cell is large enough;
 //! coarser zooms show ancestor slabs, so every zoom is a clean partition of the world. Writes a
-//! tile set: `manifest.json`, `tiles/{z}/{x}/{y}.fly`, `layers/{language,lines}/…`, and
-//! `index/paths.bin`.
+//! tile set: `manifest.json`, `tiles/{z}/{x}/{y}.fly`, `layers/{language,lines}/…`,
+//! `index/paths.bin`, and `index/tiles.bin` (every tile address, for readers that can't list).
 //!
 //! Output is deterministic: the tree is path-sorted, ids are assigned in that order, the treemap
 //! and tiler are pure f64, and no wall-clock time enters the output (`generated_at` is supplied by
@@ -128,7 +128,13 @@ pub fn run(index_db: &Path, out_dir: &Path, opts: &Options) -> Result<Summary, L
         .map(|(i, c)| (c.as_str(), i as u16))
         .collect();
 
-    let tile_count = write_tiles(&arena, root, out_dir, &world, max_zoom, &cat_index)?;
+    let keys = write_tiles(&arena, root, out_dir, &world, max_zoom, &cat_index)?;
+    write_bytes(
+        out_dir,
+        flyover_tiles::keys::KEYS_PATH,
+        &flyover_tiles::keys::encode(&keys),
+    )?;
+    let tile_count = keys.len() as u64;
     write_paths(&files, out_dir)?;
     let stats = stats(&arena, &files);
     write_manifest(out_dir, opts, &world, max_zoom, &categories, &files, stats)?;
@@ -399,11 +405,11 @@ fn write_tiles(
     world: &Rect,
     max_zoom: u8,
     cat_index: &HashMap<&str, u16>,
-) -> Result<u64, LayoutError> {
+) -> Result<Vec<(u8, u32, u32)>, LayoutError> {
+    let mut keys = Vec::new();
     if arena[root].children.is_empty() {
-        return Ok(0);
+        return Ok(keys);
     }
-    let mut tile_count = 0u64;
     for z in 0..=max_zoom {
         let mut visible = Vec::new();
         collect_visible(arena, root, z, &mut visible);
@@ -455,10 +461,10 @@ fn write_tiles(
                 }
                 .encode(),
             )?;
-            tile_count += 1;
+            keys.push((z, x, y));
         }
     }
-    Ok(tile_count)
+    Ok(keys)
 }
 
 fn feature_geometry(node: &Node, origin_x: f64, origin_y: f64) -> Feature {

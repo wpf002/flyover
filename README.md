@@ -6,7 +6,7 @@ Point Flyover at any git repo and it builds a 3D map of the code you can fly thr
 
 ## Status
 
-M3 done. The pipeline runs end to end from the CLI: `flyover index` builds `index.db` (files, symbols, imports, exclusions; ten languages), `flyover layout` cuts it into a deterministic quadtree tile set, and `flyover view` opens it in a native wgpu window (map and fly cameras, LOD streaming off the render thread, LRU GPU cache, hover picking, color and height bound to layers). `flyover view --screenshot` and `--bench` render headlessly. The web app registers repos; the in-browser viewer and the job worker land in M5, source text in M4. Milestones are in [docs/SPEC.md](docs/SPEC.md).
+M5 done except deployment. The whole pipeline runs from the browser: submit a public git URL, the worker clones it (shallow, hooks off, host-allowlisted, SSRF-checked), indexes it, cuts a tile set, and uploads it; the page shows the job's stage live; when it finishes you fly the result in the browser on WebGPU. The same renderer runs natively with `flyover view` (window, headless screenshot, `--bench`). Not done: the worker Dockerfile and the Railway deploy, so there is no public URL yet. Source text (M4), shapes (M6), and edges (M7) are still ahead. Milestones are in [docs/SPEC.md](docs/SPEC.md).
 
 ## Stack
 
@@ -40,8 +40,13 @@ pnpm install
 cp .env.example .env
 pnpm db:migrate --name init
 pnpm rust:build   # the worker shells out to target/release/flyover
+pnpm wasm:build   # the browser renderer (wasm32 + WebGPU) into apps/web/public/renderer
 pnpm dev          # web, api, and the job worker
 ```
+
+`pnpm wasm:build` needs the wasm target and CLI once: `rustup target add wasm32-unknown-unknown && cargo install wasm-bindgen-cli --version 0.2.128`.
+
+Then open the web app, paste a git URL, and watch the job run. When it says Ready, hit Fly.
 
 Web is on http://localhost:3000, API on http://localhost:4000.
 
@@ -103,7 +108,7 @@ The API reads the `TILE_STORAGE_*` and `S3_*` variables to serve tile sets; the 
 ## Project structure
 
 ```
-apps/web                 Next.js: landing, repo list, add-repo form (POST /repos); wasm viewer page in M5
+apps/web                 Next.js: landing, repo list, add-repo form, job progress, WebGPU viewer page
 apps/api                 Fastify: repos, index jobs, tile sets, and immutable tile streaming from storage
 apps/worker              Claims index jobs (SKIP LOCKED), hardened shallow clone, runs the CLI, uploads tile sets
 packages/db              Prisma schema, migrations, and the client (getPrisma)
@@ -115,6 +120,7 @@ crates/flyover-index     Repo walk, exclusions, tree-sitter symbols and imports 
 crates/flyover-layout    Squarified treemap and quadtree tiler; Voronoi-in-a-shape in M6
 crates/flyover-render    wgpu renderer: native window + headless screenshot/bench; wasm in M5
 crates/flyover-cli       The `flyover` binary: scan, index, layout, view
+crates/flyover-web       wasm32 + WebGPU build of the renderer, driven from the web app
 docs/SPEC.md             Architecture, tile format, security rules, milestones with acceptance criteria
 docs/BUILD_PROMPT.md     The prompt to paste into Claude Code, one milestone per session
 CLAUDE.md                Rules for Claude Code sessions in this repo

@@ -1,12 +1,12 @@
 import type { TileSetDto, TileSetManifest } from "@flyover/types";
 
-// TODO(M5): mount the wasm build of crates/flyover-render on the canvas below and point it at
-// `${NEXT_PUBLIC_API_URL}/tilesets/${tileSetId}/files/`. Needs the wasm32 + WebGPU build of the
-// renderer (HTTP tile fetch instead of disk, decode in web workers) and a WebGPU feature check.
+import { Viewer } from "./viewer";
 
 export const dynamic = "force-dynamic";
 
 const API_URL = process.env.API_URL ?? "http://localhost:4000";
+// The browser fetches tiles from the API directly, so it needs the public URL.
+const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 const numFmt = new Intl.NumberFormat("en-US");
 
 async function load(id: string): Promise<{ set: TileSetDto; manifest: TileSetManifest } | null> {
@@ -78,15 +78,7 @@ export default async function ViewPage({ params }: { params: Promise<{ tileSetId
         </span>
       </div>
 
-      <div className="viewer-stage" id="flyover-canvas-mount" data-tileset={set.id}>
-        <div className="state">
-          <h3>Browser renderer coming next</h3>
-          <p>
-            The map is built and served by the API. To fly it now, run the native viewer on the same
-            tile set: <code>flyover view &lt;TILE_STORAGE_DIR&gt;/tilesets/&lt;job&gt;</code>.
-          </p>
-        </div>
-      </div>
+      <Viewer tileSetId={set.id} apiBase={PUBLIC_API_URL} />
 
       {languages.length > 0 ? (
         <div className="legend" aria-label="Language colors">

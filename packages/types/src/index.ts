@@ -2,7 +2,8 @@
 // The tile set manifest mirrors crates/flyover-tiles/src/lib.rs. Change both together
 // and bump TILE_FORMAT_VERSION when the on-disk format changes.
 
-export const TILE_FORMAT_VERSION = 1;
+// v2: tile sets carry index/tiles.bin, the list of tile addresses (see flyover-tiles).
+export const TILE_FORMAT_VERSION = 2;
 
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
 

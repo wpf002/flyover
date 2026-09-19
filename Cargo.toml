@@ -36,6 +36,9 @@ tree-sitter-ruby = "=0.23.1"
 tree-sitter-rust = "=0.24.2"
 tree-sitter-typescript = "=0.23.2"
 zstd = "=0.14.0"
+# Pure-Rust zstd decoder: tile decode on every target, including wasm32 (the C zstd crate is
+# native-only and used just for encoding in the layout stage).
+ruzstd = "=0.9.0"
 
 # Renderer (M3): wgpu native + winit window, glam math, offscreen PNG for headless checks.
 wgpu = "=30.0.1"
@@ -44,6 +47,14 @@ pollster = "=1.0.1"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 glam = { version = "=0.33.7", features = ["bytemuck"] }
 png = "=0.18.1"
+
+# Browser build (M5): wasm-bindgen glue for crates/flyover-web. Versions match what wgpu's
+# WebGPU backend already locks, so there is one copy of each.
+wasm-bindgen = "=0.2.128"
+wasm-bindgen-futures = "=0.4.78"
+js-sys = "=0.3.105"
+web-sys = "=0.3.105"
+console_error_panic_hook = "=0.1.7"
 
 flyover-tiles = { path = "crates/flyover-tiles" }
 flyover-index = { path = "crates/flyover-index" }

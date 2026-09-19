@@ -20,7 +20,8 @@
     "rust:check": "cargo check --workspace --all-targets",
     "rust:test": "cargo test --workspace",
     "rust:lint": "cargo clippy --workspace --all-targets -- -D warnings",
-    "rust:build": "cargo build --release -p flyover-cli"
+    "rust:build": "cargo build --release -p flyover-cli",
+    "wasm:build": "cargo build -p flyover-web --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir apps/web/public/renderer target/wasm32-unknown-unknown/release/flyover_web.wasm"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

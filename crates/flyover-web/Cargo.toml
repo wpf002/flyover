@@ -1,0 +1,26 @@
+[package]
+name = "flyover-web"
+description = "Browser build of the renderer: wasm-bindgen exports driven from the web app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+# Everything is wasm32-only; on native targets this crate builds empty.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+flyover-render.workspace = true
+flyover-tiles.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["HtmlCanvasElement"] }
+console_error_panic_hook.workspace = true

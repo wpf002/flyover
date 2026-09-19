@@ -11,3 +11,4 @@ packages/db/prisma/migrations
 
 # Indexer test fixtures are byte-exact sample sources, not code we format.
 crates/*/tests/fixtures
+apps/web/public/renderer

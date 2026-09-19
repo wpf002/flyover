@@ -81,6 +81,7 @@ pub enum RenderError {
     TileSet(#[from] crate::tileset::TileSetError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("png: {0}")]
     Png(#[from] png::EncodingError),
     #[error("window: {0}")]
@@ -95,23 +96,27 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// Open an adapter and device, optionally compatible with a window surface.
-    pub fn open(
+    /// Request an adapter and device, optionally compatible with a surface. Async so it also runs
+    /// in the browser, where WebGPU hands these out through promises.
+    pub async fn request(
         instance: &wgpu::Instance,
         surface: Option<&wgpu::Surface<'_>>,
     ) -> Result<Gpu, RenderError> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: surface,
-            ..Default::default()
-        }))?;
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: surface,
+                ..Default::default()
+            })
+            .await?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
                 label: Some("flyover"),
                 required_limits: adapter.limits(),
                 ..Default::default()
-            }))?;
+            })
+            .await?;
         let adapter_info = adapter.get_info();
         Ok(Gpu {
             adapter,
@@ -121,6 +126,17 @@ impl Gpu {
         })
     }
 
+    /// Blocking [`Gpu::request`] for native callers.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open(
+        instance: &wgpu::Instance,
+        surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<Gpu, RenderError> {
+        pollster::block_on(Gpu::request(instance, surface))
+    }
+
+    /// Block until submitted GPU work finishes (native; the browser drives this itself).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn wait(&self) {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
@@ -440,6 +456,8 @@ pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Textu
 pub struct Offscreen {
     pub width: u32,
     pub height: u32,
+    // Read back only by native screenshots; the browser renders to its canvas instead.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     color: wgpu::Texture,
     pub color_view: wgpu::TextureView,
     pick: wgpu::Texture,
@@ -481,12 +499,14 @@ impl Offscreen {
         }
     }
 
-    /// Read the color target back as tightly packed RGBA8 rows.
+    /// Read the color target back as tightly packed RGBA8 rows (native, blocking).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn read_rgba(&self, gpu: &Gpu) -> Result<Vec<u8>, RenderError> {
         let unpadded = self.width * 4;
         let padded = unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let data = copy_out(gpu, &self.color, 0, 0, self.width, self.height, padded)?;
+        let buffer = copy_region(gpu, &self.color, 0, 0, self.width, self.height, padded);
+        let data = map_blocking(gpu, &buffer)?;
         let mut out = Vec::with_capacity((unpadded * self.height) as usize);
         for row in 0..self.height {
             let start = (row * padded) as usize;
@@ -495,11 +515,13 @@ impl Offscreen {
         Ok(out)
     }
 
-    /// Read one feature id from the pick target. 0 means empty background.
-    pub fn read_id(&self, gpu: &Gpu, x: u32, y: u32) -> Result<u32, RenderError> {
+    /// Submit a copy of the pick-target pixel at (x, y) into a new mappable buffer. The first 4
+    /// bytes, once mapped, are the feature id (0 = background). Callers map it however their
+    /// platform allows: blocking natively ([`Offscreen::read_id`]), with a promise in the browser.
+    pub fn copy_id(&self, gpu: &Gpu, x: u32, y: u32) -> wgpu::Buffer {
         let x = x.min(self.width.saturating_sub(1));
         let y = y.min(self.height.saturating_sub(1));
-        let data = copy_out(
+        copy_region(
             gpu,
             &self.pick,
             x,
@@ -507,13 +529,19 @@ impl Offscreen {
             1,
             1,
             wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
-        )?;
+        )
+    }
+
+    /// Read one feature id from the pick target (native, blocking). 0 means empty background.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_id(&self, gpu: &Gpu, x: u32, y: u32) -> Result<u32, RenderError> {
+        let data = map_blocking(gpu, &self.copy_id(gpu, x, y))?;
         Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
     }
 }
 
-/// Copy a texture region into a mappable buffer and return its bytes (row-padded).
-fn copy_out(
+/// Copy a texture region into a new mappable buffer (rows padded to `padded_row`) and submit.
+fn copy_region(
     gpu: &Gpu,
     texture: &wgpu::Texture,
     x: u32,
@@ -521,11 +549,10 @@ fn copy_out(
     width: u32,
     height: u32,
     padded_row: u32,
-) -> Result<Vec<u8>, RenderError> {
-    let size = (padded_row * height) as wgpu::BufferAddress;
+) -> wgpu::Buffer {
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
-        size,
+        size: (padded_row * height) as wgpu::BufferAddress,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -556,7 +583,12 @@ fn copy_out(
         },
     );
     gpu.queue.submit(Some(encoder.finish()));
+    buffer
+}
 
+/// Map a readback buffer and wait for it (native only: blocks the calling thread).
+#[cfg(not(target_arch = "wasm32"))]
+fn map_blocking(gpu: &Gpu, buffer: &wgpu::Buffer) -> Result<Vec<u8>, RenderError> {
     let (tx, rx) = std::sync::mpsc::channel();
     buffer.map_async(wgpu::MapMode::Read, .., move |r| {
         let _ = tx.send(r.is_ok());

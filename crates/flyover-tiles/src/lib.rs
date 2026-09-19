@@ -6,12 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod keys;
 pub mod layer;
 pub mod paths;
 pub mod tile;
 
 /// Bump on any breaking change to manifest.json or the binary tile layout.
-pub const FORMAT_VERSION: u32 = 1;
+/// v2: tile sets carry `index/tiles.bin`, the list of tile addresses, so readers that can't list
+/// directories (the browser) know which tiles exist.
+pub const FORMAT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

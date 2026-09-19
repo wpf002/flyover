@@ -22,6 +22,9 @@ packages/db/src/generated
 # local data: cloned repos, indexes, tile sets
 .data
 
+# generated wasm renderer (pnpm wasm:build)
+apps/web/public/renderer
+
 # os / editor
 .DS_Store
 *.log

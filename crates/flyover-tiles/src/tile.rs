@@ -10,12 +10,14 @@
 //! ```
 //! Offsets are in element units: a vertex offset counts vertices (each two f32), an index offset
 //! counts u32 indices. Encoding is deterministic, so the same tile round-trips to the same bytes.
+//! Encoding (C zstd) is native-only; decoding uses pure-Rust ruzstd so it also runs in wasm32.
 
-use std::io::{Read, Write};
+use std::io::Read;
 
 use crate::FORMAT_VERSION;
 
 pub const FLY_MAGIC: [u8; 4] = *b"FLY1";
+#[cfg(not(target_arch = "wasm32"))]
 const ZSTD_LEVEL: i32 = 19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,7 @@ pub enum FeatureKind {
 }
 
 impl FeatureKind {
+    #[cfg(not(target_arch = "wasm32"))]
     fn to_u8(self) -> u8 {
         match self {
             FeatureKind::Dir => 0,
@@ -76,11 +79,15 @@ pub enum TileError {
     BadKind(u8),
     #[error("tile is truncated or its offsets are out of range")]
     Truncated,
+    #[error("tile is not valid zstd: {0}")]
+    Compression(String),
 }
 
 impl Tile {
-    /// Encode and zstd-compress. Deterministic for a given tile.
+    /// Encode and zstd-compress. Deterministic for a given tile. Native only.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn encode(&self) -> Result<Vec<u8>, TileError> {
+        use std::io::Write;
         let mut buf = Vec::new();
         buf.extend_from_slice(&FLY_MAGIC);
         buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
@@ -124,7 +131,9 @@ impl Tile {
     /// Decompress and decode bytes produced by [`Tile::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Tile, TileError> {
         let mut raw = Vec::new();
-        zstd::stream::Decoder::new(bytes)?.read_to_end(&mut raw)?;
+        ruzstd::decoding::StreamingDecoder::new(bytes)
+            .map_err(|e| TileError::Compression(e.to_string()))?
+            .read_to_end(&mut raw)?;
         let mut r = Reader::new(&raw);
 
         if r.take(4)? != FLY_MAGIC {

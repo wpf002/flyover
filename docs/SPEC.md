@@ -73,6 +73,7 @@ layers/{key}/{z}/{x}/{y}.flv       one value per feature, same order as the geom
 edges/{z}/{x}/{y}.fle              dependency edges, aggregated per zoom (M7)
 text/{fileId >> 12}/{fileId}.ftx   source text plus token spans, fetched per file on demand (M4)
 index/paths.bin                    fileId -> path and stats, for picking and search
+index/tiles.bin                    every tile address, for readers that cannot list a directory
 ```
 
 `.fly` v1, little-endian, zstd-compressed as a whole:
@@ -89,7 +90,8 @@ Extrusion happens in the vertex shader from the bound height layer, so height ch
 
 Text tiles (`.ftx`) hold the file's UTF-8 text and token spans (start, length, token class) produced at index time from tree-sitter highlights, so the renderer ships no parsers.
 
-Tile sets are immutable. New commit, new tile set, new prefix.
+Tile sets are immutable. New commit, new tile set, new prefix. The format version is 2: v1 had no
+`index/tiles.bin`, which the browser needs because it cannot list `tiles/` over HTTP.
 
 ### 2.5 Serve
 
@@ -149,16 +151,22 @@ Targets, not measurements. Replace each with a measured number, the hardware, an
 
 Hardware: Apple M5 (10 cores), 24 GB, macOS (Darwin 27.0.0). Release build (`pnpm rust:build`).
 
-| Stage (milestone)    | Input                                                           | Wall-clock                                                | Peak RSS                            | Command                                                                                 |
-| -------------------- | --------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
-| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                         | 1.04 s                                                    | 82.8 MiB                            | `/usr/bin/time -l flyover index <postgres> -o <out>`                                    |
-| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                               | 0.48 s                                                    | 37.1 MiB                            | `/usr/bin/time -l flyover index . -o <out>`                                             |
-| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)           | 8.06 s                                                    | 98.3 MiB                            | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                   |
-| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06 | 29.5 MiB process; 7.7 MiB GPU tiles | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440` |
+| Stage (milestone)    | Input                                                                  | Wall-clock                                                                          | Peak RSS                                      | Command                                                                                 |
+| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                                | 1.04 s                                                                              | 82.8 MiB                                      | `/usr/bin/time -l flyover index <postgres> -o <out>`                                    |
+| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                                      | 0.48 s                                                                              | 37.1 MiB                                      | `/usr/bin/time -l flyover index . -o <out>`                                             |
+| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)                  | 8.06 s                                                                              | 98.3 MiB                                      | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                   |
+| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen        | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06                           | 29.5 MiB process; 7.7 MiB GPU tiles           | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440` |
+| Web pipeline (M5)    | postgres via the browser: submit -> clone -> index -> layout -> upload | 75 s total (clone 58.5, index 1.4, layout 9.1, upload 2.7)                          | —                                             | submit https://github.com/postgres/postgres.git in the web app                          |
+| Web renderer (M5)    | postgres tile set in Chrome 152, 2048x1105 canvas, orbiting at zoom    | 120 fps sustained (display cap); frame intervals p50 8.3 ms, p95 9.1 ms, p99 9.3 ms | 14 MB JS heap; 20-24 tiles drawn of 55 cached | `requestAnimationFrame` deltas over 480 frames in the viewer                            |
 
 Index and layout are both deterministic: two runs on postgres produce byte-identical output (`index.db` sha256 matches; the 23,523-file tile set hashes identically). Target for "1M lines, laptop" is index under 60 s and full pipeline under 2 min; the 4.4M-line repo indexes in ~1 s and lays out in ~8 s. Largest geometry tile is 33 KB, under the 256 KB budget.
 
-Renderer (M3): frame time is measured end to end per frame (LOD select, streaming, upload, encode, submit, GPU wait) into an offscreen 1440p target, so it excludes swapchain present and vsync. The 120 fps target (8.33 ms) is met with wide margin on postgres; it is not yet measured on Chromium (M9), and the web target stays a target until M5.
+Renderer (M5, web): the browser is vsync-limited, so 120 fps is the display cap rather than the renderer's
+ceiling; the number that matters is that no frame interval exceeded 9.4 ms while streaming and orbiting, so
+the 60 fps target holds with room. Memory is the JS heap; GPU tile residency is reported by the viewer.
+
+Renderer (M3): frame time is measured end to end per frame (LOD select, streaming, upload, encode, submit, GPU wait) into an offscreen 1440p target, so it excludes swapchain present and vsync. The 120 fps target (8.33 ms) is met with wide margin on postgres; it is not yet measured on Chromium (M9).
 
 ## 6. Security
 

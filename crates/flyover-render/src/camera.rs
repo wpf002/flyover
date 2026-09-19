@@ -5,6 +5,17 @@ use glam::{Mat4, Vec3};
 
 use flyover_tiles::Bounds;
 
+/// Movement keys currently held. Shared by the native window and the browser.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Controls {
+    pub forward: bool,
+    pub back: bool,
+    pub left: bool,
+    pub right: bool,
+    pub up: bool,
+    pub down: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraMode {
     /// Orbit/pan/zoom around a point on the map.
@@ -74,6 +85,72 @@ impl Camera {
                 self.center - dir * self.distance
             }
             CameraMode::Fly => self.pos,
+        }
+    }
+
+    /// Switch between map and fly, keeping the eye where it is.
+    pub fn toggle_mode(&mut self) {
+        match self.mode {
+            CameraMode::Map => {
+                let eye = self.eye();
+                let dir = (self.center - eye).normalize_or_zero();
+                self.pos = eye;
+                self.fly_yaw = dir.y.atan2(dir.x);
+                self.fly_pitch = dir.z.asin();
+                self.mode = CameraMode::Fly;
+            }
+            CameraMode::Fly => self.mode = CameraMode::Map,
+        }
+    }
+
+    /// Drag by (dx, dy) pixels: orbit in map mode, look around in fly mode.
+    pub fn look(&mut self, dx: f32, dy: f32) {
+        let k = 0.005;
+        match self.mode {
+            CameraMode::Map => {
+                self.yaw -= dx * k;
+                self.pitch = (self.pitch + dy * k).clamp(-1.55, -0.05);
+            }
+            CameraMode::Fly => {
+                self.fly_yaw -= dx * k;
+                self.fly_pitch = (self.fly_pitch - dy * k).clamp(-1.55, 1.55);
+            }
+        }
+    }
+
+    /// Scroll by `lines` notches: zoom in map mode, change `fly_speed` in fly mode.
+    pub fn scroll(&mut self, lines: f32, span: f32, fly_speed: &mut f32) {
+        match self.mode {
+            CameraMode::Map => {
+                self.distance =
+                    (self.distance * 0.9f32.powf(lines)).clamp(span * 0.005, span * 6.0);
+            }
+            CameraMode::Fly => *fly_speed = (*fly_speed * 1.2f32.powf(lines)).clamp(0.05, 50.0),
+        }
+    }
+
+    /// Advance by the held controls over `dt` seconds. Map mode pans the center across the
+    /// ground; fly mode moves the eye, faster at altitude so skimming the roofs stays controllable.
+    pub fn step(&mut self, c: &Controls, dt: f32, span: f32, fly_speed: f32) {
+        let axis = |pos: bool, neg: bool| f32::from(u8::from(pos)) - f32::from(u8::from(neg));
+        let (fwd, strafe, lift) = (
+            axis(c.forward, c.back),
+            axis(c.right, c.left),
+            axis(c.up, c.down),
+        );
+        match self.mode {
+            CameraMode::Map => {
+                let (sy, cy) = self.yaw.sin_cos();
+                let forward = Vec3::new(cy, sy, 0.0);
+                let right = Vec3::new(sy, -cy, 0.0);
+                self.center += (forward * fwd + right * strafe) * self.distance * 0.8 * dt;
+            }
+            CameraMode::Fly => {
+                let forward = self.fly_forward();
+                let right = forward.cross(Vec3::Z).normalize_or_zero();
+                let speed = self.pos.z.abs().max(span * 0.01) * fly_speed * dt;
+                self.pos += (forward * fwd + right * strafe + Vec3::Z * lift) * speed;
+            }
         }
     }
 
