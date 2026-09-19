@@ -6,7 +6,7 @@ Point Flyover at any git repo and it builds a 3D map of the code you can fly thr
 
 ## Status
 
-M1 done. `flyover index <path> -o <dir>` writes `index.db` (files, symbols, imports, exclusions) for ten languages via tree-sitter, deterministically. `flyover scan` and `GET/POST /repos` work. Layout, tiles, and renderer are not built. Milestones are in [docs/SPEC.md](docs/SPEC.md).
+M2 done. `flyover index` writes `index.db` (files, symbols, imports, exclusions) for ten languages, and `flyover layout` turns it into a rectangular treemap tile set: `.fly` geometry, `language`/`lines` layers, `index/paths.bin`, and `manifest.json`, cut into a quadtree pyramid. Output is deterministic (byte-identical across runs). `flyover scan` and `GET/POST /repos` work. The renderer (M3) is next. Milestones are in [docs/SPEC.md](docs/SPEC.md).
 
 ## Stack
 
