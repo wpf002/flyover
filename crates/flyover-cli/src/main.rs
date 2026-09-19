@@ -66,12 +66,39 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Open a tile set in the native viewer. Not implemented: M3.
-    View { tileset: PathBuf },
+    /// Open a tile set in the native viewer, or render it headlessly.
+    View {
+        /// Tile set directory produced by `flyover layout`.
+        tileset: PathBuf,
+        /// Run the scripted camera path offscreen and print frame-time statistics.
+        #[arg(long)]
+        bench: bool,
+        /// Frames to render with --bench.
+        #[arg(long, default_value_t = 600)]
+        frames: usize,
+        /// Render one frame offscreen to this PNG instead of opening a window.
+        #[arg(long)]
+        screenshot: Option<PathBuf>,
+        /// With --screenshot: camera position along the bench path, 0 (overview) to 1 (low).
+        #[arg(long, default_value_t = 0.0)]
+        path_t: f32,
+        /// Viewport width in pixels (headless modes).
+        #[arg(long, default_value_t = 1440)]
+        width: u32,
+        /// Viewport height in pixels (headless modes).
+        #[arg(long, default_value_t = 900)]
+        height: u32,
+        /// Layer bound to color.
+        #[arg(long, default_value = "language")]
+        color_by: String,
+        /// Layer bound to height.
+        #[arg(long, default_value = "lines")]
+        height_by: String,
+        /// Print JSON instead of text (headless modes).
+        #[arg(long)]
+        json: bool,
+    },
 }
-
-/// Exit code for subcommands that exist in the CLI but aren't built yet.
-const EXIT_NOT_IMPLEMENTED: u8 = 2;
 
 fn main() -> ExitCode {
     match run(Cli::parse()) {
@@ -152,13 +179,96 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Command::View { .. } => Ok(not_implemented("view", "M3")),
+        Command::View {
+            tileset,
+            bench,
+            frames,
+            screenshot,
+            path_t,
+            width,
+            height,
+            color_by,
+            height_by,
+            json,
+        } => {
+            let opts = flyover_render::ViewOptions {
+                color_layer: color_by,
+                height_layer: height_by,
+                ..Default::default()
+            };
+            if bench {
+                let r = flyover_render::bench(&tileset, frames, width, height, &opts)
+                    .with_context(|| format!("benchmarking {}", tileset.display()))?;
+                let value = serde_json::json!({
+                    "adapter": r.adapter,
+                    "frames": r.frames,
+                    "viewport": format!("{}x{}", r.width, r.height),
+                    "avgMs": round2(r.avg_ms),
+                    "p50Ms": round2(r.p50_ms),
+                    "p95Ms": round2(r.p95_ms),
+                    "p99Ms": round2(r.p99_ms),
+                    "maxMs": round2(r.max_ms),
+                    "avgTilesDrawn": round2(r.avg_tiles_drawn),
+                    "peakResidentTiles": r.peak_resident_tiles,
+                    "peakResidentMiB": round2(r.peak_resident_mb),
+                });
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&value)?);
+                } else {
+                    println!(
+                        "bench on {} ({} frames at {}x{})",
+                        r.adapter, r.frames, r.width, r.height
+                    );
+                    println!(
+                        "frame ms   avg {:.2}  p50 {:.2}  p95 {:.2}  p99 {:.2}  max {:.2}",
+                        r.avg_ms, r.p50_ms, r.p95_ms, r.p99_ms, r.max_ms
+                    );
+                    println!(
+                        "tiles      drawn/frame {:.1}  peak resident {} ({:.1} MiB)",
+                        r.avg_tiles_drawn, r.peak_resident_tiles, r.peak_resident_mb
+                    );
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            if let Some(out) = screenshot {
+                let shot = flyover_render::screenshot(&tileset, &out, width, height, path_t, &opts)
+                    .with_context(|| format!("rendering {}", tileset.display()))?;
+                let (id, what) = shot.center;
+                let value = serde_json::json!({
+                    "png": out.display().to_string(),
+                    "adapter": shot.adapter,
+                    "drawnTiles": shot.drawn_tiles,
+                    "allTilesLoaded": shot.settled,
+                    "coverage": round2(f64::from(shot.coverage)),
+                    "centerFeatureId": id,
+                    "centerPath": what.as_ref().map(|(p, _)| p.clone()),
+                    "centerLines": what.as_ref().map(|(_, l)| *l),
+                });
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&value)?);
+                } else {
+                    println!(
+                        "wrote {} ({} tiles, adapter {})",
+                        out.display(),
+                        shot.drawn_tiles,
+                        shot.adapter
+                    );
+                    match what {
+                        Some((path, lines)) => println!("center pixel: {path} ({lines} lines)"),
+                        None => println!("center pixel: feature {id}"),
+                    }
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            flyover_render::run_window(&tileset, opts)
+                .with_context(|| format!("viewing {}", tileset.display()))?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
-fn not_implemented(name: &str, milestone: &str) -> ExitCode {
-    eprintln!("`flyover {name}` isn't implemented yet. It lands in {milestone}, see docs/SPEC.md.");
-    ExitCode::from(EXIT_NOT_IMPLEMENTED)
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
 }
 
 /// Repo name for the manifest when none is given: the directory holding the index.db.
