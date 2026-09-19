@@ -24,5 +24,6 @@ pollster.workspace = true
 winit.workspace = true
 
 [dev-dependencies]
+flyover-index.workspace = true
 flyover-layout.workspace = true
 rusqlite.workspace = true

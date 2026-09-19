@@ -27,6 +27,10 @@ pub struct Shot {
     pub coverage: f32,
     /// What's under the center pixel: feature id, and path/lines if it's a file.
     pub center: (u32, Option<(String, u32)>),
+    /// Files drawing source text in this frame, and how many of those drew glyphs rather than
+    /// token bars.
+    pub text_files: usize,
+    pub glyph_files: usize,
 }
 
 /// Render one frame to a PNG, headless. `path_t` places the camera along the `--bench` path
@@ -41,18 +45,39 @@ pub fn screenshot(
 ) -> Result<Shot, RenderError> {
     let (gpu, mut scene) = headless(tileset, opts)?;
     let offscreen = Offscreen::new(&gpu.device, width, height);
-    let camera = bench_camera(
+    let mut camera = bench_camera(
         &Camera::framing(scene.tiles.manifest.bounds),
         path_t.clamp(0.0, 1.0),
     );
     let aspect = width as f32 / height as f32;
-    let settled = scene.settle(
+    let mut settled = scene.settle(
         &gpu,
         &camera,
         aspect,
         height as f32,
         Duration::from_secs(120),
     );
+    // Focusing needs the overview loaded first: the roof to aim at comes from a decoded tile.
+    // Two passes, because the exact framing depends on the file's real line width, which only the
+    // text tile knows: aim from the line-count estimate, let the text land, then aim again.
+    if let Some(needle) = opts.focus.as_deref() {
+        for _ in 0..2 {
+            let Some(focused) = scene.focus_camera(needle, aspect, height as f32) else {
+                break;
+            };
+            camera = focused;
+            settled = scene.settle(
+                &gpu,
+                &camera,
+                aspect,
+                height as f32,
+                Duration::from_secs(120),
+            );
+            settle_text(&gpu, &mut scene, &camera, aspect, height as f32);
+        }
+    }
+    // Text streams in after the geometry it sits on, so let it settle too.
+    settle_text(&gpu, &mut scene, &camera, aspect, height as f32);
     scene.set_camera(&gpu, &camera, aspect);
 
     let mut encoder = gpu
@@ -77,13 +102,31 @@ pub fn screenshot(
     let rgba = offscreen.read_rgba(&gpu)?;
     write_png(out_png, width, height, &rgba)?;
     let id = offscreen.read_id(&gpu, width / 2, height / 2)?;
+    let (text_files, glyph_files, _) = scene.text_stats();
     Ok(Shot {
         adapter: gpu.adapter_info.name.clone(),
         drawn_tiles: scene.drawn_tiles(),
         settled,
         coverage: coverage(&rgba),
         center: (id, scene.describe(id)),
+        text_files,
+        glyph_files,
     })
+}
+
+/// Pump the loop until the set of files drawing text stops growing. Headless only: the window
+/// never waits, it just draws whatever has arrived.
+fn settle_text(gpu: &Gpu, scene: &mut Scene, camera: &Camera, aspect: f32, viewport_h: f32) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut stable = 0;
+    let mut last = usize::MAX;
+    while Instant::now() < deadline && stable < 3 {
+        scene.update(gpu, camera, aspect, viewport_h);
+        let (files, _, _) = scene.text_stats();
+        stable = if files == last { stable + 1 } else { 0 };
+        last = files;
+        std::thread::sleep(Duration::from_millis(4));
+    }
 }
 
 /// Fraction of pixels that differ from the clear color.
@@ -125,6 +168,12 @@ pub struct BenchReport {
     pub avg_tiles_drawn: f64,
     pub peak_resident_tiles: usize,
     pub peak_resident_mb: f64,
+    /// Files drawing source per frame, and how many of those drew glyphs rather than token bars.
+    pub avg_text_files: f64,
+    pub avg_glyph_files: f64,
+    pub peak_text_mb: f64,
+    /// True when the path dived onto `opts.focus` instead of running the standard overview orbit.
+    pub dived: bool,
 }
 
 /// Render `frames` frames headlessly along [`bench_camera`], timing each frame end to end
@@ -142,17 +191,36 @@ pub fn bench(
     let start = Camera::framing(scene.tiles.manifest.bounds);
     let aspect = width as f32 / height as f32;
 
+    // `--focus` turns the orbit into a dive onto that file, which is the path that actually
+    // exercises text: it crosses the bar tier and ends inside the glyph tier.
+    let target = opts.focus.as_deref().and_then(|needle| {
+        scene.settle(
+            &gpu,
+            &start,
+            aspect,
+            height as f32,
+            Duration::from_secs(120),
+        );
+        scene.focus_camera(needle, aspect, height as f32)
+    });
+
     let mut times = Vec::with_capacity(frames);
     let mut drawn = 0usize;
+    let mut text_files = 0usize;
+    let mut glyph_files = 0usize;
     let mut peak_tiles = 0usize;
     let mut peak_bytes = 0u64;
+    let mut peak_text = 0u64;
     for i in 0..frames {
         let t = if frames > 1 {
             i as f32 / (frames - 1) as f32
         } else {
             0.0
         };
-        let camera = bench_camera(&start, t);
+        let camera = match &target {
+            Some(end) => crate::dive_camera(&start, end, t),
+            None => bench_camera(&start, t),
+        };
         let t0 = Instant::now();
         scene.update(&gpu, &camera, aspect, height as f32);
         scene.set_camera(&gpu, &camera, aspect);
@@ -171,6 +239,10 @@ pub fn bench(
         gpu.wait();
         times.push(t0.elapsed().as_secs_f64() * 1000.0);
         drawn += scene.drawn_tiles();
+        let (files, glyphs, text_bytes) = scene.text_stats();
+        text_files += files;
+        glyph_files += glyphs;
+        peak_text = peak_text.max(text_bytes);
         peak_tiles = peak_tiles.max(scene.resident_tiles());
         peak_bytes = peak_bytes.max(scene.resident_bytes());
     }
@@ -191,6 +263,10 @@ pub fn bench(
         avg_tiles_drawn: drawn as f64 / frames.max(1) as f64,
         peak_resident_tiles: peak_tiles,
         peak_resident_mb: peak_bytes as f64 / (1024.0 * 1024.0),
+        avg_text_files: text_files as f64 / frames.max(1) as f64,
+        avg_glyph_files: glyph_files as f64 / frames.max(1) as f64,
+        peak_text_mb: peak_text as f64 / (1024.0 * 1024.0),
+        dived: target.is_some(),
     })
 }
 

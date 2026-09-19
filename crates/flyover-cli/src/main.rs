@@ -94,6 +94,13 @@ enum Command {
         /// Layer bound to height.
         #[arg(long, default_value = "lines")]
         height_by: String,
+        /// Start the camera over the first file whose path contains this, close enough to read
+        /// its source.
+        #[arg(long)]
+        focus: Option<String>,
+        /// Draw buildings only, without source text on the roofs.
+        #[arg(long)]
+        no_text: bool,
         /// Print JSON instead of text (headless modes).
         #[arg(long)]
         json: bool,
@@ -167,6 +174,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     "files": summary.files,
                     "directories": summary.directories,
                     "tiles": summary.tiles,
+                    "textTiles": summary.text_tiles,
                     "maxZoom": summary.max_zoom,
                 });
                 println!("{}", serde_json::to_string_pretty(&value)?);
@@ -175,6 +183,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 println!("{:<14} {}", "files", summary.files);
                 println!("{:<14} {}", "directories", summary.directories);
                 println!("{:<14} {}", "tiles", summary.tiles);
+                println!("{:<14} {}", "textTiles", summary.text_tiles);
                 println!("{:<14} {}", "maxZoom", summary.max_zoom);
             }
             Ok(ExitCode::SUCCESS)
@@ -189,11 +198,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
             height,
             color_by,
             height_by,
+            focus,
+            no_text,
             json,
         } => {
             let opts = flyover_render::ViewOptions {
                 color_layer: color_by,
                 height_layer: height_by,
+                focus,
+                text: !no_text,
                 ..Default::default()
             };
             if bench {
@@ -211,6 +224,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     "avgTilesDrawn": round2(r.avg_tiles_drawn),
                     "peakResidentTiles": r.peak_resident_tiles,
                     "peakResidentMiB": round2(r.peak_resident_mb),
+                    "path": if r.dived { "dive" } else { "orbit" },
+                    "avgTextFiles": round2(r.avg_text_files),
+                    "avgGlyphFiles": round2(r.avg_glyph_files),
+                    "peakTextMiB": round2(r.peak_text_mb),
                 });
                 if json {
                     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -226,6 +243,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     println!(
                         "tiles      drawn/frame {:.1}  peak resident {} ({:.1} MiB)",
                         r.avg_tiles_drawn, r.peak_resident_tiles, r.peak_resident_mb
+                    );
+                    println!(
+                        "text       files/frame {:.1} ({:.1} as glyphs)  peak {:.1} MiB  path {}",
+                        r.avg_text_files,
+                        r.avg_glyph_files,
+                        r.peak_text_mb,
+                        if r.dived { "dive" } else { "orbit" }
                     );
                 }
                 return Ok(ExitCode::SUCCESS);
@@ -243,6 +267,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     "centerFeatureId": id,
                     "centerPath": what.as_ref().map(|(p, _)| p.clone()),
                     "centerLines": what.as_ref().map(|(_, l)| *l),
+                    "textFiles": shot.text_files,
+                    "glyphFiles": shot.glyph_files,
                 });
                 if json {
                     println!("{}", serde_json::to_string_pretty(&value)?);

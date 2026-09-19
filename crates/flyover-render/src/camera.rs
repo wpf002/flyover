@@ -68,11 +68,51 @@ impl Camera {
         }
     }
 
+    /// A map camera framing one rectangle: close enough that its source text is readable, tilted
+    /// a little off vertical so the building it sits on is still visible. The distance is set by
+    /// whichever of the rectangle's sides needs more room at this aspect ratio, so a wide roof is
+    /// not pushed away by its width. `world_span` is the size of the whole tile set, which sets
+    /// the depth range.
+    pub fn over(center: Vec3, size: (f32, f32), aspect: f32, world_span: f32) -> Self {
+        let fovy = 60f32.to_radians();
+        let span = size.1.max(size.0 / aspect.max(0.1)).max(1e-6);
+        Camera {
+            mode: CameraMode::Map,
+            center,
+            distance: span / (fovy * 0.5).tan() * 0.62,
+            yaw: std::f32::consts::FRAC_PI_2,
+            pitch: -1.15,
+            pos: center + Vec3::new(0.0, -span, span),
+            fly_yaw: std::f32::consts::FRAC_PI_2,
+            fly_pitch: -0.7,
+            fovy,
+            near: (span * 0.002).max(1e-5),
+            far: world_span * 8.0,
+        }
+    }
+
     /// Direction the fly camera faces.
     pub fn fly_forward(&self) -> Vec3 {
         let (sy, cy) = self.fly_yaw.sin_cos();
         let (sp, cp) = self.fly_pitch.sin_cos();
         Vec3::new(cy * cp, sy * cp, sp).normalize_or_zero()
+    }
+
+    /// The direction the camera looks, whichever mode it is in.
+    pub fn forward(&self) -> Vec3 {
+        match self.mode {
+            CameraMode::Map => (self.center - self.eye()).normalize_or_zero(),
+            CameraMode::Fly => self.fly_forward(),
+        }
+    }
+
+    /// Where the view ray meets the horizontal plane at height `z`, or `None` when it looks away
+    /// from that plane.
+    pub fn ground_hit(&self, z: f32) -> Option<Vec3> {
+        let eye = self.eye();
+        let dir = self.forward();
+        let t = (z - eye.z) / dir.z;
+        (dir.z.abs() > 1e-6 && t > 0.0).then(|| eye + dir * t)
     }
 
     /// The eye position for the active mode.

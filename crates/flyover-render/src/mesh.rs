@@ -36,6 +36,20 @@ pub struct PreparedTile {
     pub key: TileKey,
     pub vertices: Vec<Vertex>,
     pub features: Vec<FeatureRaw>,
+    /// Roof rectangles of the file features in this tile, so the scene knows where source text
+    /// goes without touching the geometry again. A file's rectangle is the same at every zoom.
+    pub roofs: Vec<Roof>,
+}
+
+/// Where one file's source text can be drawn: the inset roof it sits on. `repr(C)` and `Pod` so
+/// the browser build can transfer a tile's roofs from a worker as plain bytes.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub struct Roof {
+    pub file_id: u32,
+    /// World-space `[x, y, w, h]`, lower-left origin.
+    pub rect: [f32; 4],
+    pub z: f32,
 }
 
 const ROOF_SHADE: f32 = 1.0;
@@ -59,6 +73,7 @@ pub fn build(
     let (ox, oy, _, _) = tile_rect(bounds, loaded.key);
     let mut vertices = Vec::new();
     let mut features = Vec::with_capacity(loaded.tile.features.len());
+    let mut roofs = Vec::new();
 
     for (fi, feature) in loaded.tile.features.iter().enumerate() {
         let raw_h = loaded.height.get(fi).copied().unwrap_or(0.0).max(0.0);
@@ -94,6 +109,24 @@ pub fn build(
             .iter()
             .map(|[x, y]| [cx + (x - cx) * INSET, cy + (y - cy) * INSET])
             .collect();
+
+        if feature.kind == FeatureKind::File {
+            let (mut x0, mut y0) = (f32::MAX, f32::MAX);
+            let (mut x1, mut y1) = (f32::MIN, f32::MIN);
+            for [x, y] in &ring {
+                x0 = x0.min(*x);
+                y0 = y0.min(*y);
+                x1 = x1.max(*x);
+                y1 = y1.max(*y);
+            }
+            if x1 > x0 && y1 > y0 {
+                roofs.push(Roof {
+                    file_id: feature.id,
+                    rect: [x0, y0, x1 - x0, y1 - y0],
+                    z: height,
+                });
+            }
+        }
 
         // Roof: reuse the pre-triangulated footprint at height_factor 1.
         for &i in &feature.indices {
@@ -135,6 +168,7 @@ pub fn build(
         key: loaded.key,
         vertices,
         features,
+        roofs,
     }
 }
 

@@ -9,6 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 use crate::mesh::{self, PreparedTile};
+use crate::text::{self, PreparedText, TextRequest};
 use crate::tileset::{TileKey, TileSet, TileSetError};
 use flyover_tiles::Bounds;
 
@@ -133,6 +134,150 @@ impl TileLoader {
         }
         out
     }
+}
+
+/// The same pattern for `.ftx` text: workers read a file's source, lay it out on the roof
+/// rectangle carried by the request, and return the instance buffer. Decode and layout, the two
+/// expensive parts, stay off the render thread.
+pub struct TextLoader {
+    queue: Arc<(Mutex<TextQueue>, Condvar)>,
+    results: Receiver<LoadedText>,
+    inflight: HashSet<u32>,
+    workers: Vec<JoinHandle<()>>,
+}
+
+struct TextQueue {
+    heap: BinaryHeap<TextJob>,
+    shutdown: bool,
+}
+
+struct TextJob {
+    priority: i64,
+    request: TextRequest,
+}
+
+impl PartialEq for TextJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority
+            && self.request.placement.file_id == other.request.placement.file_id
+    }
+}
+impl Eq for TextJob {}
+impl Ord for TextJob {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority.cmp(&other.priority).then_with(|| {
+            other
+                .request
+                .placement
+                .file_id
+                .cmp(&self.request.placement.file_id)
+        })
+    }
+}
+impl PartialOrd for TextJob {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct LoadedText {
+    file_id: u32,
+    result: Result<PreparedText, TileSetError>,
+}
+
+impl TextLoader {
+    pub fn new(tiles: Arc<TileSet>, palette: text::Palette, threads: usize) -> Self {
+        let queue = Arc::new((
+            Mutex::new(TextQueue {
+                heap: BinaryHeap::new(),
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
+        let (tx, rx) = channel();
+        let workers = (0..threads.max(1))
+            .map(|_| spawn_text_worker(Arc::clone(&tiles), queue.clone(), tx.clone(), palette))
+            .collect();
+        TextLoader {
+            queue,
+            results: rx,
+            inflight: HashSet::new(),
+            workers,
+        }
+    }
+
+    pub fn request(&mut self, request: TextRequest) {
+        if !self.inflight.insert(request.placement.file_id) {
+            return;
+        }
+        let (lock, cvar) = &*self.queue;
+        lock.lock().unwrap().heap.push(TextJob {
+            priority: request.priority,
+            request,
+        });
+        cvar.notify_one();
+    }
+
+    pub fn in_flight(&self, file_id: u32) -> bool {
+        self.inflight.contains(&file_id)
+    }
+
+    /// Drain finished layouts. A file whose `.ftx` is missing (an unparsed or binary file has
+    /// none) simply never appears; the key is cleared so it is not retried every frame.
+    pub fn drain(&mut self) -> Vec<PreparedText> {
+        let mut out = Vec::new();
+        while let Ok(loaded) = self.results.try_recv() {
+            self.inflight.remove(&loaded.file_id);
+            if let Ok(prepared) = loaded.result {
+                out.push(prepared);
+            }
+        }
+        out
+    }
+}
+
+impl Drop for TextLoader {
+    fn drop(&mut self) {
+        {
+            let (lock, cvar) = &*self.queue;
+            lock.lock().unwrap().shutdown = true;
+            cvar.notify_all();
+        }
+        for w in self.workers.drain(..) {
+            let _ = w.join();
+        }
+    }
+}
+
+fn spawn_text_worker(
+    tiles: Arc<TileSet>,
+    queue: Arc<(Mutex<TextQueue>, Condvar)>,
+    tx: Sender<LoadedText>,
+    palette: text::Palette,
+) -> JoinHandle<()> {
+    let metrics = crate::font::Atlas::bundled().metrics;
+    std::thread::spawn(move || loop {
+        let request = {
+            let (lock, cvar) = &*queue;
+            let mut q = lock.lock().unwrap();
+            loop {
+                if q.shutdown {
+                    return;
+                }
+                if let Some(job) = q.heap.pop() {
+                    break job.request;
+                }
+                q = cvar.wait(q).unwrap();
+            }
+        };
+        let file_id = request.placement.file_id;
+        let result = tiles
+            .load_text(file_id)
+            .map(|tile| text::layout(&metrics, &tile, request.placement, &palette));
+        if tx.send(LoadedText { file_id, result }).is_err() {
+            return; // loader dropped
+        }
+    })
 }
 
 impl Drop for TileLoader {

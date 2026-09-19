@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 use crate::mesh::{FeatureRaw, PreparedTile, Vertex};
+use crate::text::{GlyphInstance, PreparedText, Tier};
 use crate::tileset::TileKey;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -64,6 +65,87 @@ fn fs_color(v: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_pick(v: VsOut) -> @location(0) u32 {
     return v.id;
+}
+"#;
+
+/// Text on the roofs. One instance per quad: a glyph sampled from the SDF atlas, or a flat bar
+/// when `cell` is `SOLID`. Six vertices per instance, no vertex or index buffer of its own.
+const TEXT_SHADER: &str = r#"
+struct Uniforms { view_proj: mat4x4<f32> };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+const THICKEN: f32 = 0.16;
+
+struct AtlasParams { uv_size: vec2<f32>, cols: u32, solid: u32 };
+@group(1) @binding(0) var atlas: texture_2d<f32>;
+@group(1) @binding(1) var atlas_sampler: sampler;
+@group(1) @binding(2) var<uniform> atlas_params: AtlasParams;
+
+struct InstIn {
+    @location(0) rect: vec4<f32>,
+    @location(1) z: f32,
+    @location(2) cell: u32,
+    @location(3) color: u32,
+};
+
+struct TextOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) @interpolate(flat) cell: u32,
+};
+
+fn unpack_color(c: u32) -> vec4<f32> {
+    return vec4<f32>(
+        f32(c & 0xffu),
+        f32((c >> 8u) & 0xffu),
+        f32((c >> 16u) & 0xffu),
+        f32((c >> 24u) & 0xffu),
+    ) / 255.0;
+}
+
+@vertex
+fn vs_text(@builtin(vertex_index) vi: u32, inst: InstIn) -> TextOut {
+    // Two triangles: (0,0) (1,0) (1,1) and (0,0) (1,1) (0,1).
+    var corner = vec2<f32>(0.0, 0.0);
+    switch vi {
+        case 1u: { corner = vec2<f32>(1.0, 0.0); }
+        case 2u, 4u: { corner = vec2<f32>(1.0, 1.0); }
+        case 5u: { corner = vec2<f32>(0.0, 1.0); }
+        default: { corner = vec2<f32>(0.0, 0.0); }
+    }
+    let world = inst.rect.xy + corner * inst.rect.zw;
+
+    var out: TextOut;
+    out.pos = u.view_proj * vec4<f32>(world.x, world.y, inst.z, 1.0);
+    out.color = unpack_color(inst.color);
+    out.cell = inst.cell;
+    if (inst.cell == atlas_params.solid) {
+        out.uv = vec2<f32>(0.0, 0.0);
+    } else {
+        let grid = vec2<f32>(
+            f32(inst.cell % atlas_params.cols),
+            f32(inst.cell / atlas_params.cols),
+        );
+        // The atlas grows downward, so the quad's top edge is the cell's first row.
+        let origin = grid * atlas_params.uv_size;
+        out.uv = origin + vec2<f32>(corner.x, 1.0 - corner.y) * atlas_params.uv_size;
+    }
+    return out;
+}
+
+// The sample and its derivative must sit in uniform control flow, so solid quads sample too and
+// their result is discarded by the select rather than by a branch.
+@fragment
+fn fs_text(v: TextOut) -> @location(0) vec4<f32> {
+    // Signed distance in 0..1 with 0.5 on the glyph edge; widen by one screen pixel for AA.
+    // THICKEN biases the edge outward by a fraction of a pixel, which keeps thin stems from
+    // washing out once a line is only a handful of pixels tall.
+    let signed = textureSample(atlas, atlas_sampler, v.uv).r - 0.5;
+    let width = max(fwidth(signed), 1e-5);
+    let glyph_alpha = clamp(signed / width + 0.5 + THICKEN, 0.0, 1.0);
+    let alpha = select(glyph_alpha, 1.0, v.cell == atlas_params.solid);
+    return vec4<f32>(v.color.rgb, v.color.a * alpha);
 }
 "#;
 
@@ -146,12 +228,18 @@ pub struct Pipelines {
     feature_layout: wgpu::BindGroupLayout,
     color: wgpu::RenderPipeline,
     pick: wgpu::RenderPipeline,
+    text: wgpu::RenderPipeline,
+    atlas_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     uniform_group: wgpu::BindGroup,
 }
 
 impl Pipelines {
-    pub fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        color_format: wgpu::TextureFormat,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("cells"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SHADER)),
@@ -234,6 +322,15 @@ impl Pipelines {
         let color = make("fs_color", color_format, "cells-color");
         let pick = make("fs_pick", PICK_FORMAT, "cells-pick");
 
+        let (atlas_layout, atlas_group) = upload_atlas(device, queue);
+        let text = text_pipeline(
+            device,
+            color_format,
+            &uniform_layout,
+            &atlas_layout,
+            depth.clone(),
+        );
+
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("uniforms"),
             size: 64,
@@ -253,6 +350,8 @@ impl Pipelines {
             feature_layout,
             color,
             pick,
+            text,
+            atlas_group,
             uniform_buffer,
             uniform_group,
         }
@@ -265,6 +364,174 @@ impl Pipelines {
             bytemuck::cast_slice(&view_proj.to_cols_array()),
         );
     }
+}
+
+/// Upload the baked font atlas as an R8 texture and build the bind group the text shader reads:
+/// the texture, a linear sampler, and the cell grid it needs to turn a cell index into uvs.
+fn upload_atlas(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let atlas = crate::font::Atlas::bundled();
+    let size = wgpu::Extent3d {
+        width: atlas.width,
+        height: atlas.height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("font-atlas"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        atlas.pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(atlas.width),
+            rows_per_image: Some(atlas.height),
+        },
+        size,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("font-atlas"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    // uv_size (x, y), cols, and the sentinel marking an instance as a flat quad.
+    let params: [u32; 4] = [
+        (atlas.cell_w as f32 / atlas.width as f32).to_bits(),
+        (atlas.cell_h as f32 / atlas.height as f32).to_bits(),
+        atlas.cols,
+        crate::text::SOLID,
+    ];
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("font-atlas-params"),
+        contents: bytemuck::cast_slice(&params),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("font-atlas"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("font-atlas"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: params.as_entire_binding(),
+            },
+        ],
+    });
+    (layout, group)
+}
+
+/// The text pipeline: instanced quads, alpha blended, depth-tested against the buildings but not
+/// writing depth (the text lies a hair above a roof it can never be occluded by).
+fn text_pipeline(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+    uniform_layout: &wgpu::BindGroupLayout,
+    atlas_layout: &wgpu::BindGroupLayout,
+    depth: Option<wgpu::DepthStencilState>,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("text"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(TEXT_SHADER)),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("text"),
+        bind_group_layouts: &[Some(uniform_layout), Some(atlas_layout)],
+        immediate_size: 0,
+    });
+    let attributes =
+        wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32, 2 => Uint32, 3 => Uint32];
+    let depth = depth.map(|d| wgpu::DepthStencilState {
+        depth_write_enabled: Some(false),
+        ..d
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("text"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_text"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<GlyphInstance>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &attributes,
+            })],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: depth,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_text"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 struct GpuTile {
@@ -360,10 +627,12 @@ impl GpuCache {
         }
     }
 
-    /// Drop least-recently-used tiles until under budget. Tiles used this frame are kept.
-    pub fn evict(&mut self, frame: u64) {
+    /// Drop least-recently-used tiles until under budget, returning what was dropped so callers
+    /// can release anything they keep alongside a tile. Tiles used this frame are kept.
+    pub fn evict(&mut self, frame: u64) -> Vec<TileKey> {
+        let mut dropped = Vec::new();
         if self.bytes <= self.budget {
-            return;
+            return dropped;
         }
         let mut order: Vec<(u64, TileKey)> =
             self.tiles.iter().map(|(k, t)| (t.last_used, *k)).collect();
@@ -374,8 +643,172 @@ impl GpuCache {
             }
             if let Some(t) = self.tiles.remove(&key) {
                 self.bytes -= t.bytes;
+                dropped.push(key);
             }
         }
+        dropped
+    }
+}
+
+struct GpuText {
+    instances: wgpu::Buffer,
+    glyphs: std::ops::Range<u32>,
+    strips: std::ops::Range<u32>,
+    line_world: f32,
+    first_line: u32,
+    bytes: u64,
+    last_used: u64,
+}
+
+/// Uploaded per-file text, evicted least-recently-used under its own byte budget. Separate from
+/// [`GpuCache`] so a burst of text near the camera cannot evict the geometry being flown over.
+pub struct TextCache {
+    files: HashMap<u32, GpuText>,
+    bytes: u64,
+    budget: u64,
+}
+
+impl TextCache {
+    pub fn new(budget_bytes: u64) -> Self {
+        TextCache {
+            files: HashMap::new(),
+            bytes: 0,
+            budget: budget_bytes,
+        }
+    }
+
+    pub fn contains(&self, file_id: u32) -> bool {
+        self.files.contains_key(&file_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Upload a laid-out file. One buffer copy; the layout itself ran on a worker.
+    pub fn upload(&mut self, device: &wgpu::Device, text: PreparedText, frame: u64) {
+        if text.instances.is_empty() {
+            return;
+        }
+        let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("text-instances"),
+            contents: bytemuck::cast_slice(&text.instances),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let bytes = text.bytes();
+        if let Some(old) = self.files.insert(
+            text.file_id,
+            GpuText {
+                instances,
+                glyphs: text.glyph_range(),
+                strips: text.strip_range(),
+                line_world: text.line_world,
+                first_line: text.first_line,
+                bytes,
+                last_used: frame,
+            },
+        ) {
+            self.bytes -= old.bytes;
+        }
+        self.bytes += bytes;
+    }
+
+    pub fn touch(&mut self, file_id: u32, frame: u64) {
+        if let Some(t) = self.files.get_mut(&file_id) {
+            t.last_used = frame;
+        }
+    }
+
+    /// World height of one text line for a resident file, or `None` if it is not resident.
+    pub fn line_world(&self, file_id: u32) -> Option<f32> {
+        self.files.get(&file_id).map(|t| t.line_world)
+    }
+
+    /// First line of the slice a resident file holds quads for.
+    pub fn window(&self, file_id: u32) -> Option<u32> {
+        self.files.get(&file_id).map(|t| t.first_line)
+    }
+
+    /// Drop least-recently-used files until under budget. Files drawn this frame are kept.
+    pub fn evict(&mut self, frame: u64) {
+        if self.bytes <= self.budget {
+            return;
+        }
+        let mut order: Vec<(u64, u32)> =
+            self.files.iter().map(|(k, t)| (t.last_used, *k)).collect();
+        order.sort();
+        for (last_used, id) in order {
+            if self.bytes <= self.budget || last_used >= frame {
+                break;
+            }
+            if let Some(t) = self.files.remove(&id) {
+                self.bytes -= t.bytes;
+            }
+        }
+    }
+}
+
+/// Record the text pass: alpha-blended quads over the already-drawn buildings, loading the color
+/// and depth attachments rather than clearing them. `draws` pairs a file id with its tier.
+pub fn encode_text_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &Pipelines,
+    cache: &TextCache,
+    draws: &[(u32, Tier)],
+    color_view: &wgpu::TextureView,
+    depth_view: &wgpu::TextureView,
+) {
+    if draws.is_empty() {
+        return;
+    }
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("text"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: color_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: depth_view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(&pipelines.text);
+    pass.set_bind_group(0, &pipelines.uniform_group, &[]);
+    pass.set_bind_group(1, &pipelines.atlas_group, &[]);
+    for (file_id, tier) in draws {
+        let Some(t) = cache.files.get(file_id) else {
+            continue;
+        };
+        let range = match tier {
+            Tier::Glyphs => t.glyphs.clone(),
+            Tier::Strips => t.strips.clone(),
+            Tier::None => continue,
+        };
+        if range.is_empty() {
+            continue;
+        }
+        pass.set_vertex_buffer(0, t.instances.slice(..));
+        pass.draw(0..6, range);
     }
 }
 

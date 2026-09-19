@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use flyover_tiles::keys;
 use flyover_tiles::layer::{LayerTile, LayerValues};
 use flyover_tiles::paths::PathsIndex;
+use flyover_tiles::text::TextTile;
 use flyover_tiles::tile::Tile;
 use flyover_tiles::Manifest;
 
@@ -56,6 +57,8 @@ pub enum TileSetError {
     Tile(TileKey, flyover_tiles::tile::TileError),
     #[error("layer tile {0:?}/{1}: {2}")]
     Layer(TileKey, String, flyover_tiles::layer::LayerError),
+    #[error("text tile for file {0}: {1}")]
+    Text(u32, flyover_tiles::text::TextError),
 }
 
 /// A tile's geometry plus the values of the color and height layers, aligned to the features.
@@ -137,6 +140,29 @@ impl TileSet {
         let color = read(&root.join(layer_tile_key(color_layer, key.z, key.x, key.y)))?;
         decode_tile(key, &fly, &height, &color, height_layer, color_layer)
     }
+
+    /// Read and decode one file's `.ftx` text tile from disk. Worker threads only, same as
+    /// [`TileSet::load`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_text(&self, file_id: u32) -> Result<TextTile, TileSetError> {
+        crate::assert_not_render_thread();
+        let root = self.root.as_ref().ok_or_else(|| TileSetError::Io {
+            path: "<memory>".into(),
+            source: std::io::Error::other("tile set was not opened from disk"),
+        })?;
+        let bytes = read(&root.join(flyover_tiles::text::text_key(file_id)))?;
+        decode_text(file_id, &bytes)
+    }
+
+    /// Line count recorded for a file id, used to estimate how small its text would be before its
+    /// `.ftx` has been fetched.
+    pub fn lines_of(&self, file_id: u32) -> Option<u32> {
+        self.paths
+            .entries
+            .binary_search_by_key(&file_id, |e| e.id)
+            .ok()
+            .map(|i| self.paths.entries[i].lines)
+    }
 }
 
 /// Decode a geometry tile and its height/color layer tiles into a [`LoadedTile`]. Pure: no IO,
@@ -171,6 +197,12 @@ pub fn decode_tile(
         height: fit(height, n),
         color: fit(color, n),
     })
+}
+
+/// Decode one `.ftx` text tile. Pure, so a browser web worker runs the same code as a native
+/// worker thread.
+pub fn decode_text(file_id: u32, bytes: &[u8]) -> Result<TextTile, TileSetError> {
+    TextTile::decode(bytes).map_err(|e| TileSetError::Text(file_id, e))
 }
 
 /// Force a layer vector to the feature count (defensive against a mismatched layer tile).
