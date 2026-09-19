@@ -39,7 +39,8 @@ docker run --name flyover-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=flyove
 pnpm install
 cp .env.example .env
 pnpm db:migrate --name init
-pnpm dev
+pnpm rust:build   # the worker shells out to target/release/flyover
+pnpm dev          # web, api, and the job worker
 ```
 
 Web is on http://localhost:3000, API on http://localhost:4000.
@@ -97,16 +98,17 @@ pnpm rust:lint && pnpm rust:test && cargo fmt --all -- --check
 | `JOB_MAX_CLONE_MB`     | no, 20000      | Clone size cap per job                                                  |
 | `JOB_TIMEOUT_MINUTES`  | no, 90         | Wall-clock cap per job                                                  |
 
-Today the code reads `DATABASE_URL`, `PORT`, `API_PORT`, `API_HOST`, `WEB_ORIGIN`, `LOG_LEVEL`, and `API_URL`. The rest are named now so M5 doesn't invent different ones.
+The API reads the `TILE_STORAGE_*` and `S3_*` variables to serve tile sets; the worker reads `DATABASE_URL`, `WORKER_DATA_DIR`, `FLYOVER_BIN`, `GIT_HOST_ALLOWLIST`, `JOB_MAX_CLONE_MB`, `JOB_TIMEOUT_MINUTES`, and the same storage variables. Relative directories resolve against the repo root, so the API and worker agree on one `.data/`.
 
 ## Project structure
 
 ```
 apps/web                 Next.js: landing, repo list, add-repo form (POST /repos); wasm viewer page in M5
-apps/api                 Fastify: repos, index jobs, tile set and tile serving
-apps/worker              Claims index jobs from Postgres, clones, shells out to the flyover CLI, uploads tiles (M5)
+apps/api                 Fastify: repos, index jobs, tile sets, and immutable tile streaming from storage
+apps/worker              Claims index jobs (SKIP LOCKED), hardened shallow clone, runs the CLI, uploads tile sets
 packages/db              Prisma schema, migrations, and the client (getPrisma)
 packages/types           Shared TS types: DTOs and the tile set manifest
+packages/storage         Tile storage behind one interface: fs (dev) and S3-compatible (prod), path guard
 packages/config          Shared tsconfig bases and the ESLint flat config
 crates/flyover-tiles     Tile set format: manifest, .fly geometry, .flv layers, paths.bin
 crates/flyover-index     Repo walk, exclusions, tree-sitter symbols and imports -> index.db

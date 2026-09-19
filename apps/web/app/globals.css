@@ -440,6 +440,81 @@ h1 .grad {
   background: var(--warn);
 }
 
+.pill-idle .pip {
+  background: var(--text-faint);
+}
+.pill-wait .pip {
+  background: var(--warn);
+}
+.pill-busy {
+  color: var(--text);
+  border-color: rgba(94, 177, 255, 0.35);
+}
+.pill-busy .pip {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.pill-ok .pip {
+  background: var(--ok);
+}
+.pill-bad {
+  color: var(--danger);
+  border-color: rgba(255, 128, 128, 0.35);
+}
+.pill-bad .pip {
+  background: var(--danger);
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+.repo-card .repo-stats {
+  font-size: 14px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.repo-card .repo-error {
+  font-size: 12px;
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fly-link {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  padding: 4px 10px;
+  margin: -4px -10px;
+  border-radius: var(--radius-sm);
+  transition: background 160ms ease;
+}
+.fly-link:hover {
+  background: rgba(94, 177, 255, 0.12);
+}
+.working {
+  color: var(--text-muted);
+}
+.link-btn {
+  font: 500 12px/1 var(--font-sans);
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+.link-btn:hover {
+  background: rgba(94, 177, 255, 0.12);
+  border-color: rgba(94, 177, 255, 0.4);
+}
+
 /* ---- empty / error states -------------------------------------------------------------- */
 
 .state {
@@ -540,6 +615,58 @@ h1 .grad {
 .viewer-wrap .back {
   font-size: 14px;
   color: var(--text-muted);
+}
+.viewer-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+.viewer-stats b {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.viewer-stage {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  min-height: 480px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.viewer-stage .state {
+  border: none;
+}
+.viewer-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
 }
 
 /* ---- responsive ------------------------------------------------------------------------ */

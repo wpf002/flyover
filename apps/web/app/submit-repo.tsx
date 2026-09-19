@@ -53,8 +53,8 @@ export function SubmitRepo() {
         </p>
       ) : state.ok ? (
         <p className="form-msg ok" role="status">
-          Added <strong>{state.name}</strong>. It’s registered — index it with the CLI while the
-          in-browser pipeline is built.
+          Added <strong>{state.name}</strong> and queued it for indexing. Progress shows below; a
+          Fly link appears when its map is ready.
         </p>
       ) : null}
     </form>
