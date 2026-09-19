@@ -1,0 +1,38 @@
+{
+  "name": "@flyover/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "18.0.1",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@flyover/config": "workspace:*",
+    "@types/node": "22.20.4",
+    "@types/pg": "8.23.1",
+    "eslint": "10.11.0",
+    "prisma": "7.10.0",
+    "typescript": "6.0.3"
+  }
+}

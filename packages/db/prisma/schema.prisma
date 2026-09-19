@@ -1,0 +1,95 @@
+// Prisma 7: the connection URL lives in prisma.config.ts, the client needs a driver adapter.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ShapeSource {
+  GENERATED
+  UPLOADED
+  RECTANGLE
+}
+
+/// A codebase someone pointed Flyover at.
+model Repo {
+  id        String     @id @default(cuid())
+  name      String
+  /// https git URL. Unique so resubmitting the same repo reuses the row.
+  source    String     @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  jobs      IndexJob[]
+  tileSets  TileSet[]
+}
+
+/// One run of clone -> index -> layout -> tile. The worker claims QUEUED rows
+/// with SELECT ... FOR UPDATE SKIP LOCKED, so Postgres is the queue.
+model IndexJob {
+  id         String    @id @default(cuid())
+  repoId     String
+  repo       Repo      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  status     JobStatus @default(QUEUED)
+  /// Ref requested by the user (branch, tag, sha). Null means default branch.
+  ref        String?
+  /// Resolved after clone.
+  commitSha  String?
+  error      String?
+  /// Timings and counts per stage, written by the worker.
+  stats      Json?
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  tileSet    TileSet?
+
+  @@index([status, createdAt])
+  @@index([repoId])
+}
+
+/// An immutable set of tiles in storage for one repo at one commit.
+model TileSet {
+  id            String      @id @default(cuid())
+  repoId        String
+  repo          Repo        @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  jobId         String      @unique
+  job           IndexJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  commitSha     String
+  formatVersion Int
+  /// Key prefix in tile storage. Everything under it is immutable.
+  storagePrefix String      @unique
+  shapeSource   ShapeSource @default(GENERATED)
+  fileCount     Int
+  lineCount     BigInt
+  maxZoom       Int
+  createdAt     DateTime    @default(now())
+  layers        Layer[]
+
+  @@index([repoId, createdAt])
+}
+
+/// A data overlay on a tile set. Adding one never rewrites geometry tiles.
+model Layer {
+  id        String   @id @default(cuid())
+  tileSetId String
+  tileSet   TileSet  @relation(fields: [tileSetId], references: [id], onDelete: Cascade)
+  key       String
+  label     String
+  /// "categorical" or "scalar"
+  kind      String
+  /// Legend, unit, range. Shape matches LayerDescriptor in @flyover/types.
+  meta      Json
+  createdAt DateTime @default(now())
+
+  @@unique([tileSetId, key])
+}

@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.turbo
+target
+pnpm-lock.yaml
+Cargo.lock
+packages/db/src/generated
+packages/db/prisma/migrations
+.data

@@ -1,0 +1,21 @@
+{
+  "name": "@flyover/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint.mjs",
+    "./tsconfig/base.json": "./tsconfig/base.json",
+    "./tsconfig/node.json": "./tsconfig/node.json",
+    "./tsconfig/next.json": "./tsconfig/next.json"
+  },
+  "dependencies": {
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "typescript-eslint": "8.70.0"
+  },
+  "peerDependencies": {
+    "eslint": "10.11.0",
+    "typescript": "6.0.3"
+  }
+}
