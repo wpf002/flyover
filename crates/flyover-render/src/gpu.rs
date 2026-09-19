@@ -480,7 +480,10 @@ fn upload_atlas(
 }
 
 /// The text pipeline: instanced quads, alpha blended, depth-tested against the buildings but not
-/// writing depth (the text lies a hair above a roof it can never be occluded by).
+/// writing depth. Text is coplanar with the roof it sits on, so it wins that tie with a depth
+/// bias rather than a lift in world space: a lift large enough to survive an overview is larger
+/// than the whole camera distance once you are close enough to read, and the text ends up behind
+/// the eye. The bias is in units of last place, so it holds at every scale.
 fn text_pipeline(
     device: &wgpu::Device,
     color_format: wgpu::TextureFormat,
@@ -501,6 +504,11 @@ fn text_pipeline(
         wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32, 2 => Uint32, 3 => Uint32];
     let depth = depth.map(|d| wgpu::DepthStencilState {
         depth_write_enabled: Some(false),
+        bias: wgpu::DepthBiasState {
+            constant: -16,
+            slope_scale: -2.0,
+            clamp: 0.0,
+        },
         ..d
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

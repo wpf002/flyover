@@ -53,9 +53,6 @@ const TEXT_BUDGET: u64 = 256 * 1024 * 1024;
 const TEXT_BUDGET: u64 = 96 * 1024 * 1024;
 /// New text fetches started per frame. A fast pan would otherwise queue thousands of files.
 const TEXT_REQUESTS_PER_FRAME: usize = 8;
-/// Text is lifted off a roof by this fraction of the tallest building, so it wins the depth test
-/// against the roof it belongs to without floating visibly above it.
-const TEXT_LIFT: f32 = 0.0015;
 /// Line height in pixels that [`Scene::focus_camera`] aims for on a file too long to frame whole.
 const FOCUS_LINE_PX: f32 = 14.0;
 
@@ -311,7 +308,6 @@ impl Scene {
         let _ = aspect;
         let px_per_world = viewport_h / (2.0 * (camera.fovy * 0.5).tan());
         let eye = camera.eye();
-        let lift = self.max_height * TEXT_LIFT;
         // Where the view ray meets a roof is the line the camera is reading, and that picks the
         // window that roof lays out. The plane differs per roof, so only the ray is shared.
         let dir = camera.forward();
@@ -330,16 +326,22 @@ impl Scene {
                 );
                 let dist = (center - eye).length().max(1e-6);
                 let per_world = px_per_world / dist;
+                // Cheapest possible rejection first. A drawn tile over a repo the size of
+                // Chromium carries thousands of roofs and almost none of them are readable, so
+                // anything past this multiply — a cache probe, a search through paths.bin — would
+                // be paid per roof per frame for text that never draws.
+                if roof.rect[3] * per_world < text::ROOF_MIN_PX {
+                    continue;
+                }
                 let resident = self.text_cache.line_world(roof.file_id);
+                let total_lines = self.tiles.lines_of(roof.file_id).unwrap_or(1);
                 let line_world = resident.unwrap_or_else(|| {
-                    let lines = self.tiles.lines_of(roof.file_id).unwrap_or(1);
-                    text::estimated_line_height(&self.metrics, roof.rect, lines)
+                    text::estimated_line_height(&self.metrics, roof.rect, total_lines)
                 });
                 let tier = text::tier(line_world * per_world);
                 if tier == Tier::None {
                     continue;
                 }
-                let total_lines = self.tiles.lines_of(roof.file_id).unwrap_or(1);
                 let aim_y = if dir.z.abs() > 1e-6 {
                     let t = (roof.z - eye.z) / dir.z;
                     if t > 0.0 {
@@ -364,15 +366,12 @@ impl Scene {
                     self.text_cache.touch(roof.file_id, self.frame);
                     draws.push((roof.file_id, tier));
                 }
-                if started < TEXT_REQUESTS_PER_FRAME
-                    && roof.rect[3] * per_world >= text::ROOF_MIN_PX
-                    && !provider.in_flight(roof.file_id)
-                {
+                if started < TEXT_REQUESTS_PER_FRAME && !provider.in_flight(roof.file_id) {
                     provider.request(TextRequest {
                         placement: Placement {
                             file_id: roof.file_id,
                             rect: roof.rect,
-                            z: roof.z + lift,
+                            z: roof.z,
                             first_line: want,
                         },
                         // Nearest first: the heap pops the largest priority.

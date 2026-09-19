@@ -151,18 +151,20 @@ Targets, not measurements. Replace each with a measured number, the hardware, an
 
 Hardware: Apple M5 (10 cores), 24 GB, macOS (Darwin 27.0.0). Release build (`pnpm rust:build`).
 
-| Stage (milestone)    | Input                                                                  | Wall-clock                                                                          | Peak RSS                                      | Command                                                                                  |
-| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                                | 1.04 s                                                                              | 82.8 MiB                                      | `/usr/bin/time -l flyover index <postgres> -o <out>`                                     |
-| Index + text (M4)    | postgres, 4,379,393 lines / 7,694 files (2,571 parsed and stored)      | 1.69 s                                                                              | 195.6 MiB                                     | `/usr/bin/time -l flyover index <postgres> -o <out>`                                     |
-| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                                      | 0.48 s                                                                              | 37.1 MiB                                      | `/usr/bin/time -l flyover index . -o <out>`                                              |
-| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)                  | 8.06 s                                                                              | 98.3 MiB                                      | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                    |
-| Layout + text (M4)   | postgres index → 7,839 tiles + 2,571 `.ftx` (115 MiB total, 23 text)   | 13.19 s                                                                             | 126.3 MiB                                     | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                    |
-| Index (M9, partial)  | Chromium, 39,732,844 lines / 251,326 files                             | 76.7 s (clone 42.2 min at 5,858 MB, layout 3.7 min → 190,563 tiles, maxZoom 9)      | not captured (ran inside the worker)          | submit https://github.com/chromium/chromium.git in the web app                           |
-| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen        | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06                           | 29.5 MiB process; 7.7 MiB GPU tiles           | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440`  |
-| Text, native (M4)    | postgres, 600-frame dive onto `numeric.c` (12k lines), 2560x1440       | with text avg 0.53 ms, p50 0.41, p95 1.01, p99 1.35; without avg 0.40, p95 0.74     | 8.0 MiB GPU tiles; 5.4 MiB text instances     | `flyover view <tiles> --bench --frames 600 --width 2560 --height 1440 --focus numeric.c` |
-| Web pipeline (M5)    | postgres via the browser: submit -> clone -> index -> layout -> upload | 75 s total (clone 58.5, index 1.4, layout 9.1, upload 2.7)                          | —                                             | submit https://github.com/postgres/postgres.git in the web app                           |
-| Web renderer (M5)    | postgres tile set in Chrome 152, 2048x1105 canvas, orbiting at zoom    | 120 fps sustained (display cap); frame intervals p50 8.3 ms, p95 9.1 ms, p99 9.3 ms | 14 MB JS heap; 20-24 tiles drawn of 55 cached | `requestAnimationFrame` deltas over 480 frames in the viewer                             |
+| Stage (milestone)    | Input                                                                    | Wall-clock                                                                          | Peak RSS                                      | Command                                                                                  |
+| -------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Index tier 1 (M1)    | postgres, 4,378,916 lines / 7,694 files                                  | 1.04 s                                                                              | 82.8 MiB                                      | `/usr/bin/time -l flyover index <postgres> -o <out>`                                     |
+| Index + text (M4)    | postgres, 4,379,393 lines / 7,694 files (2,571 parsed and stored)        | 1.69 s                                                                              | 195.6 MiB                                     | `/usr/bin/time -l flyover index <postgres> -o <out>`                                     |
+| Index tier 1 (M1)    | this repo, 4,275 lines / 85 files                                        | 0.48 s                                                                              | 37.1 MiB                                      | `/usr/bin/time -l flyover index . -o <out>`                                              |
+| Layout + tiles (M2)  | postgres index (7,694 files → 7,840 tiles, maxZoom 7)                    | 8.06 s                                                                              | 98.3 MiB                                      | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                    |
+| Layout + text (M4)   | postgres index → 7,839 tiles + 2,571 `.ftx` (115 MiB total, 23 text)     | 13.19 s                                                                             | 126.3 MiB                                     | `/usr/bin/time -l flyover layout <index.db> -o <out>`                                    |
+| Full pipeline        | Chromium, 39,732,844 lines / 251,326 files                               | 43.9 min: clone 36.5, index 81.3 s, layout 4.4 min, upload 1.7 min -> 2.9 GiB       | not captured (ran inside the worker)          | submit https://github.com/chromium/chromium.git in the web app                           |
+| Native renderer (M9) | Chromium tile set (190,563 tiles, maxZoom 9), 600-frame orbit, 2560x1440 | with text avg 1.52 ms, p50 1.38, p95 2.31, p99 3.16; without avg 1.37, p95 2.24     | 126 MiB process; 64.2 MiB GPU tiles           | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440`  |
+| Text at scale (M4)   | Chromium, 600-frame dive onto a readable .cc file, 2560x1440             | avg 1.93 ms, p50 1.89, p95 2.58, p99 3.52, max 9.00                                 | 134 MiB process; 90.9 MiB GPU, 1.8 MiB text   | `flyover view <tiles> --bench --frames 600 --width 2560 --height 1440 --focus .cc`       |
+| Native renderer (M3) | postgres tile set, 600-frame scripted path, 2560x1440 offscreen          | avg 0.48 ms/frame, p50 0.42, p95 0.81, p99 1.19, max 4.06                           | 29.5 MiB process; 7.7 MiB GPU tiles           | `/usr/bin/time -l flyover view <tiles> --bench --frames 600 --width 2560 --height 1440`  |
+| Text, native (M4)    | postgres, 600-frame dive onto `numeric.c` (12k lines), 2560x1440         | with text avg 0.53 ms, p50 0.41, p95 1.01, p99 1.35; without avg 0.40, p95 0.74     | 8.0 MiB GPU tiles; 5.4 MiB text instances     | `flyover view <tiles> --bench --frames 600 --width 2560 --height 1440 --focus numeric.c` |
+| Web pipeline (M5)    | postgres via the browser: submit -> clone -> index -> layout -> upload   | 75 s total (clone 58.5, index 1.4, layout 9.1, upload 2.7)                          | —                                             | submit https://github.com/postgres/postgres.git in the web app                           |
+| Web renderer (M5)    | postgres tile set in Chrome 152, 2048x1105 canvas, orbiting at zoom      | 120 fps sustained (display cap); frame intervals p50 8.3 ms, p95 9.1 ms, p99 9.3 ms | 14 MB JS heap; 20-24 tiles drawn of 55 cached | `requestAnimationFrame` deltas over 480 frames in the viewer                             |
 
 Index and layout are both deterministic: two runs on postgres produce byte-identical output (`index.db` sha256 matches; the 23,523-file tile set hashes identically). Target for "1M lines, laptop" is index under 60 s and full pipeline under 2 min; the 4.4M-line repo indexes in ~1 s and lays out in ~8 s. Largest geometry tile is 33 KB, under the 256 KB budget.
 
@@ -170,7 +172,7 @@ Renderer (M5, web): the browser is vsync-limited, so 120 fps is the display cap 
 ceiling; the number that matters is that no frame interval exceeded 9.4 ms while streaming and orbiting, so
 the 60 fps target holds with room. Memory is the JS heap; GPU tile residency is reported by the viewer.
 
-Renderer (M3): frame time is measured end to end per frame (LOD select, streaming, upload, encode, submit, GPU wait) into an offscreen 1440p target, so it excludes swapchain present and vsync. The 120 fps target (8.33 ms) is met with wide margin on postgres; it is not yet measured on Chromium (M9).
+Renderer (M3): frame time is measured end to end per frame (LOD select, streaming, upload, encode, submit, GPU wait) into an offscreen 1440p target, so it excludes swapchain present and vsync. The 120 fps target (8.33 ms) is met with wide margin on postgres and on Chromium.
 
 Text (M4): the dive path ends with the camera close enough over one file that its lines are 14 px
 tall, which is the glyph tier. Text costs 0.13 ms a frame on average and 0.27 ms at p95, against an
@@ -179,10 +181,18 @@ adds 23 MiB of `.ftx` to a 115 MiB postgres tile set. A file's em size comes fro
 count, but only a 1,024-line window around where the camera looks is turned into quads, so a
 12,000-line file costs the same as a 500-line one.
 
-Chromium (partial): index and layout both completed and are recorded above. The upload stage then
-failed on `push(...array)` over ~800k tile paths, which is fixed and covered by a regression test in
-`apps/worker/test/upload-scale.test.ts`; the rerun is not finished, so there is still no Chromium
-render measurement.
+Chromium: the whole pipeline ran from the browser and finished. 39.7M lines and 251,326 files index
+in 81 seconds and lay out into 190,563 tiles plus 158k `.ftx` in 4.4 minutes; the tile set is 2.9 GiB
+(750 MiB geometry, 1.5 GiB layers, 683 MiB text). The clone dominates at 36.5 minutes for 5,858 MB,
+which is network rather than us. Rendering it holds p95 2.31 ms, a quarter of the 8.33 ms that
+120 fps allows, in 126 MiB of process memory against a 3 GB budget, and source on the roofs is
+legible at that scale. The largest geometry tile is 148 KiB, inside the 256 KB budget. The first
+attempt died at upload on `push(...array)` over ~800k paths; fixed, with a regression test in
+`apps/worker/test/upload-scale.test.ts`.
+
+Text costs 0.15 ms a frame on the Chromium orbit even though no roof there is readable: a drawn tile
+carries thousands of file roofs, so the per-roof scan rejects on one multiply against the projected
+roof height before touching the text cache or `paths.bin`.
 
 ## 6. Security
 
