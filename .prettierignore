@@ -8,3 +8,6 @@ Cargo.lock
 packages/db/src/generated
 packages/db/prisma/migrations
 .data
+
+# Indexer test fixtures are byte-exact sample sources, not code we format.
+crates/*/tests/fixtures
