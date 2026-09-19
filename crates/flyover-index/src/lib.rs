@@ -17,12 +17,18 @@ use std::path::{Path, PathBuf};
 use ignore::WalkBuilder;
 use serde::Serialize;
 
+pub mod db;
+pub mod exclude;
+pub mod grammars;
+pub mod index;
 pub mod language;
+
+pub use index::{build, run, IndexData, IndexError, Options};
 
 /// Files larger than this are counted but not read line by line.
 pub const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 
-const SNIFF_BYTES: usize = 8 * 1024;
+pub(crate) const SNIFF_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {
@@ -122,12 +128,12 @@ pub fn scan(root: &Path) -> Result<ScanReport, ScanError> {
 }
 
 /// Same rule git uses: a NUL byte near the start means binary.
-fn is_binary(bytes: &[u8]) -> bool {
+pub(crate) fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(SNIFF_BYTES)].contains(&0)
 }
 
 /// Newline count, plus one for a final line with no trailing newline.
-fn count_lines(bytes: &[u8]) -> u64 {
+pub(crate) fn count_lines(bytes: &[u8]) -> u64 {
     if bytes.is_empty() {
         return 0;
     }

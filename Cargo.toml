@@ -12,11 +12,29 @@ publish = false
 # Exact pins. Add new crates here, not in the member manifests.
 [workspace.dependencies]
 anyhow = "=1.0.104"
+blake3 = "=1.8.7"
 clap = { version = "=4.6.7", features = ["derive"] }
 ignore = "=0.4.33"
+rayon = "=1.12.0"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 thiserror = "=2.0.20"
+
+# tree-sitter core plus one grammar per M1 language. Grammars target a range of
+# tree-sitter-language ABI versions; the shim decouples them from the core version.
+tree-sitter = "=0.27.0"
+tree-sitter-c = "=0.24.2"
+tree-sitter-c-sharp = "=0.23.5"
+tree-sitter-cpp = "=0.23.4"
+tree-sitter-go = "=0.25.0"
+tree-sitter-java = "=0.23.5"
+tree-sitter-javascript = "=0.25.0"
+tree-sitter-php = "=0.24.2"
+tree-sitter-python = "=0.25.0"
+tree-sitter-ruby = "=0.23.1"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-typescript = "=0.23.2"
 
 flyover-tiles = { path = "crates/flyover-tiles" }
 flyover-index = { path = "crates/flyover-index" }
